@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+/* ============================================
+   DEPLOYFLOW DESIGN SYSTEM
+   Central place for colors, fonts, and theme
+   tokens used across the entire application.
+   ============================================ */
+@theme {
+  /* --- Font --- */
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* --- Base Background Shades (Dark Theme) --- */
+  --color-bg-primary: #0a0a0f;      /* Main app background - almost black */
+  --color-bg-secondary: #12121a;    /* Sidebar / Navbar background */
+  --color-bg-card: #16161f;         /* Card background */
+  --color-bg-hover: #1e1e2a;        /* Hover state background */
+
+  /* --- Border Colors --- */
+  --color-border-subtle: #22222e;   /* Default card/section borders */
+  --color-border-strong: #2e2e3d;   /* Emphasized borders */
+
+  /* --- Brand / Accent Colors --- */
+  --color-brand-primary: #6366f1;   /* Indigo - primary actions, links */
+  --color-brand-secondary: #8b5cf6; /* Purple - gradients, highlights */
+
+  /* --- Status Colors (Deployments/Pods) --- */
+  --color-status-success: #22c55e;  /* Deployed / Running */
+  --color-status-failed: #ef4444;   /* Failed deployment */
+  --color-status-pending: #f59e0b;  /* Building / In-progress */
+  --color-status-info: #3b82f6;     /* Informational */
+
+  /* --- Text Colors --- */
+  --color-text-primary: #f4f4f6;    /* Main headings/text */
+  --color-text-secondary: #9ca3af;  /* Muted/subtitle text */
+  --color-text-tertiary: #6b7280;   /* Least emphasis (timestamps etc) */
+}
+
+/* ============================================
+   BASE STYLES
+   ============================================ */
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbar - matches dark SaaS aesthetic */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-brand-primary);
+}
+
+/* ============================================
+   GLASSMORPHISM UTILITY
+   Reusable glass-effect class for cards, navbar,
+   modals — the signature look of our SaaS UI.
+   ============================================ */
+.glass {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
