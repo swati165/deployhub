@@ -33,6 +33,12 @@ The repository includes a Render Blueprint at `../render.yaml`. Push the selecte
 
 The Blueprint starts on Render's free plans and Singapore region, so no paid resource is intentionally selected. **Free Render PostgreSQL is temporary and expires after 30 days**, and the free web service can spin down when idle. Treat this as a demo deployment, not durable production hosting; upgrade to a paid PostgreSQL plan before storing data you need to keep. No Render account is connected to this workspace, so you must approve creation in your Render dashboard after pushing the branch.
 
+## Deploying to an Ubuntu VM
+
+The Compose stack includes Caddy as an HTTPS reverse proxy. Set `APP_DOMAIN` in the Compose `.env` file to a DNS hostname pointing to the VM, and allow inbound TCP ports 80 and 443 in the cloud firewall/security group. The API and PostgreSQL ports must remain private; the Compose configuration only binds them to loopback. Caddy automatically requests and renews the TLS certificate. Start the database, API, and proxy with `npm run app:up`.
+
+For a temporary demo hostname only, a service such as `sslip.io` can map a name derived from the VM's public IP. Prefer a domain you control for a persistent deployment.
+
 The dashboard, project list, project details, deployment list/detail, and log viewer use the API. A deployment request is persisted before its worker starts. If deployment integrations are not configured, its status becomes `failed` and its logs explain what is missing.
 
 ## Enabling real deployments

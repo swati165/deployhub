@@ -12,7 +12,7 @@
     "test:server": "node --test server/*.test.js",
     "backend:up": "docker compose up --build -d db api",
     "backend:down": "docker compose stop api db",
-    "app:up": "docker compose up --build -d db api"
+    "app:up": "docker compose up --build -d db api caddy"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
