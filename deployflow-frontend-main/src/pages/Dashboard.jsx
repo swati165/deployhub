@@ -1,165 +1,64 @@
-import { FolderKanban, Rocket, CheckCircle2, XCircle } from 'lucide-react'
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from 'recharts'
-import Card from '../components/Card'
+import { useCallback, useEffect, useState } from 'react'
+import { FolderKanban, Rocket, CheckCircle2, XCircle, Loader2, ArrowRight } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import StatCard from '../components/StatCard'
-import Badge from '../components/Badge'
-import {
-  dashboardStats,
-  deploymentHistory,
-  recentDeployments,
-} from '../utils/mockData'
+import Card from '../components/Card'
+import DeploymentRow from '../components/DeploymentRow'
+import { apiRequest } from '../utils/api'
 
-/**
- * Custom Tooltip for the Recharts Area Chart
- * Styled to match our dark glassmorphism theme instead of
- * Recharts' default white tooltip.
- */
-function CustomTooltip({ active, payload, label }) {
-  if (!active || !payload || !payload.length) return null
-
-  return (
-    <div className="glass rounded-lg p-3 text-sm">
-      <p className="text-text-secondary mb-1">{label}</p>
-      {payload.map((entry) => (
-        <p key={entry.name} style={{ color: entry.color }} className="font-medium">
-          {entry.name}: {entry.value}
-        </p>
-      ))}
-    </div>
-  )
-}
+const emptyStats = { totalProjects: 0, activeDeployments: 0, successRate: 0, failedDeployments: 0 }
 
 function Dashboard() {
+  const [dashboard, setDashboard] = useState({ stats: emptyStats, recentDeployments: [] })
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const refreshDashboard = useCallback(async () => {
+    try {
+      setDashboard(await apiRequest('/dashboard'))
+      setError('')
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshDashboard()
+    const timer = setInterval(refreshDashboard, 8000)
+    return () => clearInterval(timer)
+  }, [refreshDashboard])
+
+  const stats = dashboard.stats
+
   return (
     <div className="space-y-6">
-      {/* Page Header */}
-      <div>
-        <h1 className="text-2xl font-bold">Dashboard</h1>
-        <p className="text-text-secondary text-sm mt-1">
-          Overview of your deployments and infrastructure
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Dashboard</h1>
+          <p className="text-text-secondary text-sm mt-1">A live view of your projects and deployment activity.</p>
+        </div>
+        <Link to="/projects" className="hidden sm:inline-flex items-center gap-2 text-sm text-brand-primary hover:underline">View projects <ArrowRight size={15} /></Link>
       </div>
-
-      {/* Stat Cards Grid */}
+      {error && <div role="alert" className="rounded-lg border border-status-failed/30 bg-status-failed/10 px-4 py-3 text-sm text-status-failed">{error}</div>}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          label="Total Projects"
-          value={dashboardStats.totalProjects}
-          icon={FolderKanban}
-          trend="8%"
-          trendUp={true}
-          accentColor="brand-primary"
-        />
-        <StatCard
-          label="Active Deployments"
-          value={dashboardStats.activeDeployments}
-          icon={Rocket}
-          trend="2%"
-          trendUp={true}
-          accentColor="status-info"
-        />
-        <StatCard
-          label="Success Rate"
-          value={`${dashboardStats.successRate}%`}
-          icon={CheckCircle2}
-          trend="1.2%"
-          trendUp={true}
-          accentColor="status-success"
-        />
-        <StatCard
-          label="Failed Deployments"
-          value={dashboardStats.failedDeployments}
-          icon={XCircle}
-          trend="5%"
-          trendUp={false}
-          accentColor="status-failed"
-        />
+        <StatCard label="Total Projects" value={loading ? '—' : stats.totalProjects} icon={FolderKanban} accentColor="brand-primary" />
+        <StatCard label="In Progress" value={loading ? '—' : stats.activeDeployments} icon={Rocket} accentColor="status-info" />
+        <StatCard label="Live Success Rate" value={loading ? '—' : `${stats.successRate}%`} icon={CheckCircle2} accentColor="status-success" />
+        <StatCard label="Failed Deployments" value={loading ? '—' : stats.failedDeployments} icon={XCircle} accentColor="status-failed" />
       </div>
-
-      {/* Deployment History Chart */}
-      <Card>
-        <div className="mb-4">
-          <h2 className="font-semibold">Deployment History</h2>
-          <p className="text-text-secondary text-xs mt-0.5">Last 7 days</p>
+      <Card className="!p-2">
+        <div className="flex items-center justify-between px-4 py-2">
+          <div>
+            <h2 className="font-semibold">Recent Deployments</h2>
+            <p className="text-text-tertiary text-xs mt-1">Latest activity from your connected repositories</p>
+          </div>
+          <Link to="/deployments" className="text-xs text-brand-primary hover:underline">All deployments</Link>
         </div>
-
-        <ResponsiveContainer width="100%" height={280}>
-          <AreaChart data={deploymentHistory}>
-            <defs>
-              {/* Gradient fill for the "success" area */}
-              <linearGradient id="successGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#22c55e" stopOpacity={0.4} />
-                <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
-              </linearGradient>
-              {/* Gradient fill for the "failed" area */}
-              <linearGradient id="failedGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4} />
-                <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-
-            <CartesianGrid strokeDasharray="3 3" stroke="#22222e" vertical={false} />
-            <XAxis dataKey="day" stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} />
-            <YAxis stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} />
-            <Tooltip content={<CustomTooltip />} />
-
-            <Area
-              type="monotone"
-              dataKey="success"
-              stroke="#22c55e"
-              strokeWidth={2}
-              fill="url(#successGradient)"
-              name="Success"
-            />
-            <Area
-              type="monotone"
-              dataKey="failed"
-              stroke="#ef4444"
-              strokeWidth={2}
-              fill="url(#failedGradient)"
-              name="Failed"
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </Card>
-
-      {/* Recent Deployments List */}
-      <Card>
-        <h2 className="font-semibold mb-4">Recent Deployments</h2>
-        <div className="space-y-3">
-          {recentDeployments.map((dep) => (
-            <div
-              key={dep.id}
-              className="flex items-center justify-between py-3 border-b border-border-subtle last:border-0"
-            >
-              <div className="flex items-center gap-3">
-                <Badge
-                  status={dep.status}
-                  pulse={dep.status === 'pending'}
-                >
-                  {dep.status}
-                </Badge>
-                <div>
-                  <p className="text-sm font-medium">{dep.project}</p>
-                  <p className="text-text-tertiary text-xs">{dep.commitMsg}</p>
-                </div>
-              </div>
-
-              <div className="text-right">
-                <p className="text-xs text-text-secondary">{dep.branch}</p>
-                <p className="text-xs text-text-tertiary">{dep.time}</p>
-              </div>
-            </div>
-          ))}
-        </div>
+        {loading ? <div className="py-12 text-center text-text-secondary"><Loader2 size={20} className="animate-spin mx-auto mb-2" />Loading activity...</div>
+          : dashboard.recentDeployments.length ? dashboard.recentDeployments.map((deployment) => <DeploymentRow key={deployment.id} deployment={deployment} />)
+            : <div className="text-center py-14"><p className="text-text-primary font-medium">No deployment activity yet</p><p className="text-text-secondary text-sm mt-1">Connect a GitHub project to start your first deployment.</p><Link to="/projects" className="inline-block mt-4 text-sm text-brand-primary hover:underline">Add a project</Link></div>}
       </Card>
     </div>
   )

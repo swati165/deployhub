@@ -16,7 +16,14 @@ function ProjectCard({ project }) {
 
   // Maps project.status -> Badge's status prop (they use the same naming,
   // except 'building' maps to 'pending' since that's our Badge convention)
-  const badgeStatus = project.status === 'building' ? 'pending' : project.status === 'active' ? 'success' : 'failed'
+  const badgeStatus = project.status === 'live'
+    ? 'success'
+    : project.status === 'failed'
+      ? 'failed'
+      : ['queued', 'cloning', 'building', 'pushing', 'deploying'].includes(project.status)
+        ? 'pending'
+        : 'neutral'
+  const stack = project.techStack || (project.stack ? [project.stack] : [])
 
   return (
     <Card hover onClick={() => navigate(`/projects/${project.id}`)}>
@@ -28,14 +35,14 @@ function ProjectCard({ project }) {
             {project.description}
           </p>
         </div>
-        <Badge status={badgeStatus} pulse={project.status === 'building'}>
+        <Badge status={badgeStatus} pulse={['queued', 'cloning', 'building', 'pushing', 'deploying'].includes(project.status)}>
           {project.status}
         </Badge>
       </div>
 
       {/* Tech stack tags */}
       <div className="flex flex-wrap gap-1.5 mb-4">
-        {project.techStack.map((tech) => (
+        {stack.map((tech) => (
           <span
             key={tech}
             className="text-xs px-2 py-1 rounded-md bg-bg-hover text-text-secondary border border-border-subtle"
@@ -56,7 +63,7 @@ function ProjectCard({ project }) {
           </span>
         </div>
         <span className="flex items-center gap-1">
-          {project.lastDeployed}
+          {project.lastDeployed ? new Date(project.lastDeployed).toLocaleDateString() : 'No deployments'}
           <ChevronRight size={14} />
         </span>
       </div>

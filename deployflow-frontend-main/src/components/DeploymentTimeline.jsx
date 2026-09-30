@@ -10,19 +10,18 @@ import { Check, X, Loader2 } from 'lucide-react'
  * - stages: array of stage names, e.g. ['Queued', 'Building', 'Deploying', 'Live']
  * - status: 'success' | 'failed' | 'pending' — determines how far the timeline fills
  */
-function DeploymentTimeline({ stages, status }) {
-  // Determine which step index we're currently at / stopped at
-  // success -> all steps complete
-  // pending -> stopped partway (simulated at step 2 = "Deploying")
-  // failed -> stopped partway with an error (simulated at step 1 = "Building")
-  const currentStepIndex =
-    status === 'success' ? stages.length - 1 : status === 'failed' ? 1 : 2
+function DeploymentTimeline({ stages, status, stage = status }) {
+  const normalizedStage = stage?.toLowerCase()
+  const stageIndex = stages.findIndex((item) => item.toLowerCase() === normalizedStage)
+  const currentStepIndex = status === 'live'
+    ? stages.length - 1
+    : Math.max(stageIndex, 0)
 
   return (
     <div className="flex items-center w-full">
       {stages.map((stage, index) => {
-        const isComplete = index < currentStepIndex || (status === 'success' && index <= currentStepIndex)
-        const isCurrent = index === currentStepIndex && status !== 'success'
+        const isComplete = index < currentStepIndex || (status === 'live' && index <= currentStepIndex)
+        const isCurrent = index === currentStepIndex && status !== 'live'
         const isFailed = isCurrent && status === 'failed'
         const isLast = index === stages.length - 1
 

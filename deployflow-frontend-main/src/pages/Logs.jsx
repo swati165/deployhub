@@ -1,45 +1,40 @@
-import { useState, useEffect, useRef } from 'react'
-import { Play, Pause, Trash2, Filter } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Play, Pause, Filter, Loader2 } from 'lucide-react'
 import Button from '../components/Button'
 import TerminalLogViewer from '../components/TerminalLogViewer'
-import { liveLogPool, logProjectOptions } from '../utils/mockData'
+import { apiRequest } from '../utils/api'
 
-/**
- * Logs Page
- * Simulates a live-streaming log console across all projects.
- * Uses setInterval to "push" a new random log entry every few seconds -
- * in a real app, this would be replaced with a WebSocket/SSE subscription.
- */
 function Logs() {
   const [logs, setLogs] = useState([])
   const [isStreaming, setIsStreaming] = useState(true)
   const [projectFilter, setProjectFilter] = useState('all')
   const [levelFilter, setLevelFilter] = useState('all')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
-  const poolIndexRef = useRef(0) // tracks which mock log to emit next
+  const loadLogs = useCallback(async () => {
+    const query = new URLSearchParams()
+    if (projectFilter !== 'all') query.set('projectId', projectFilter)
+    if (levelFilter !== 'all') query.set('level', levelFilter)
+    try {
+      const result = await apiRequest(`/logs?${query}`)
+      setLogs(result.logs.reverse())
+      setError('')
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [projectFilter, levelFilter])
 
-  // Simulate live log streaming
+  useEffect(() => { loadLogs() }, [loadLogs])
   useEffect(() => {
-    if (!isStreaming) return // paused - don't start the interval
+    if (!isStreaming) return undefined
+    const timer = setInterval(loadLogs, 3000)
+    return () => clearInterval(timer)
+  }, [isStreaming, loadLogs])
 
-    const interval = setInterval(() => {
-      const nextLog = liveLogPool[poolIndexRef.current % liveLogPool.length]
-      setLogs((prev) => [...prev, { ...nextLog, id: Date.now() }])
-      poolIndexRef.current += 1
-    }, 1800) // new log every 1.8s
-
-    // Cleanup: stops the interval when component unmounts or streaming pauses
-    return () => clearInterval(interval)
-  }, [isStreaming])
-
-  // Apply project + level filters to the accumulated logs
-  const filteredLogs = logs.filter((log) => {
-    const matchesProject =
-      projectFilter === 'all' || log.text.includes(`[${projectFilter}]`)
-    const matchesLevel = levelFilter === 'all' || log.type === levelFilter
-    return matchesProject && matchesLevel
-  })
-
+  const projects = [...new Map(logs.map((log) => [log.projectId, { id: log.projectId, name: log.project }])).values()]
   const levelFilters = [
     { key: 'all', label: 'All' },
     { key: 'info', label: 'Info' },
@@ -49,89 +44,36 @@ function Logs() {
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Logs</h1>
-          <p className="text-text-secondary text-sm mt-1">
-            Real-time logs streaming from all your services
-          </p>
+          <h1 className="text-2xl font-bold">Deployment Logs</h1>
+          <p className="text-text-secondary text-sm mt-1">Logs recorded by your deployment pipeline, refreshed every 3 seconds.</p>
         </div>
-
-        <div className="flex gap-2">
-          <Button
-            variant={isStreaming ? 'secondary' : 'primary'}
-            icon={isStreaming ? Pause : Play}
-            onClick={() => setIsStreaming((prev) => !prev)}
-          >
-            {isStreaming ? 'Pause' : 'Resume'}
-          </Button>
-          <Button variant="ghost" icon={Trash2} onClick={() => setLogs([])}>
-            Clear
-          </Button>
-        </div>
+        <Button variant={isStreaming ? 'secondary' : 'primary'} icon={isStreaming ? Pause : Play} onClick={() => setIsStreaming((value) => !value)}>
+          {isStreaming ? 'Pause refresh' : 'Resume refresh'}
+        </Button>
       </div>
-
-      {/* Filters */}
+      {error && <div role="alert" className="rounded-lg border border-status-failed/30 bg-status-failed/10 px-4 py-3 text-sm text-status-failed">{error}</div>}
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
-        {/* Level filter pills */}
         <div className="flex gap-1 bg-bg-hover border border-border-subtle rounded-lg p-1 w-fit">
           {levelFilters.map((filter) => (
-            <button
-              key={filter.key}
-              onClick={() => setLevelFilter(filter.key)}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 ${
-                levelFilter === filter.key
-                  ? 'bg-brand-primary text-white'
-                  : 'text-text-secondary hover:text-text-primary'
-              }`}
-            >
+            <button key={filter.key} onClick={() => setLevelFilter(filter.key)} className={`px-3 py-1.5 rounded-md text-xs font-medium ${levelFilter === filter.key ? 'bg-brand-primary text-white' : 'text-text-secondary hover:text-text-primary'}`}>
               {filter.label}
             </button>
           ))}
         </div>
-
-        {/* Project filter dropdown */}
         <div className="flex items-center gap-2 bg-bg-hover border border-border-subtle rounded-lg px-3 py-2 w-fit">
           <Filter size={14} className="text-text-tertiary" />
-          <select
-            value={projectFilter}
-            onChange={(e) => setProjectFilter(e.target.value)}
-            className="bg-transparent outline-none text-sm text-text-primary cursor-pointer"
-          >
+          <select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)} className="bg-transparent outline-none text-sm text-text-primary cursor-pointer">
             <option value="all" className="bg-bg-secondary">All Projects</option>
-            {logProjectOptions.map((proj) => (
-              <option key={proj} value={proj} className="bg-bg-secondary">
-                {proj}
-              </option>
-            ))}
+            {projects.map((project) => <option key={project.id} value={project.id} className="bg-bg-secondary">{project.name}</option>)}
           </select>
         </div>
-
-        {/* Live indicator */}
-        {isStreaming && (
-          <span className="flex items-center gap-1.5 text-xs text-status-success ml-auto">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-status-success opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-status-success" />
-            </span>
-            Live
-          </span>
-        )}
+        {isStreaming && <span className="flex items-center gap-1.5 text-xs text-status-success sm:ml-auto"><span className="w-2 h-2 rounded-full bg-status-success animate-pulse" />Refreshing</span>}
       </div>
-
-      {/* Log viewer */}
-      {filteredLogs.length > 0 ? (
-        <TerminalLogViewer logs={filteredLogs} />
-      ) : (
-        <div className="bg-bg-card border border-border-subtle rounded-xl text-center py-16">
-          <p className="text-text-secondary text-sm">
-            {logs.length === 0
-              ? 'Waiting for logs...'
-              : 'No logs match your current filters.'}
-          </p>
-        </div>
-      )}
+      {loading ? <div className="py-12 text-center text-text-secondary"><Loader2 size={20} className="animate-spin mx-auto mb-2" />Loading logs...</div>
+        : logs.length ? <TerminalLogViewer logs={logs} />
+          : <div className="bg-bg-card border border-border-subtle rounded-xl text-center py-16"><p className="text-text-secondary text-sm">No deployment logs yet. Start a deployment to see pipeline activity here.</p></div>}
     </div>
   )
 }

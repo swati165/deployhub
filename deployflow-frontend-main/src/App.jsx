@@ -1,18 +1,29 @@
-import { Routes, Route } from 'react-router-dom'
-import DashboardLayout from './layouts/DashboardLayout'
-import ProtectedRoute from './components/ProtectedRoute'
-import Login from './pages/Login'
+import { lazy, Suspense, useEffect } from 'react'
+import { Routes, Route, useNavigate } from 'react-router-dom'
+import DashboardLayout from './layouts/Dashboardlayout'
+import ProtectedRoute from './components/protectedRoute'
+import Login from './pages/login'
 import Dashboard from './pages/Dashboard'
 import Projects from './pages/Projects'
 import ProjectDetails from './pages/ProjectDetails'
-import Deployments from './pages/Deployments'
+import Deployments from './pages/deployments'
 import DeploymentDetails from './pages/DeploymentDetails'
 import Logs from './pages/Logs'
-import Monitoring from './pages/Monitoring'
 import Settings from './pages/Settings'
 
+const Monitoring = lazy(() => import('./pages/monitoring'))
+
 function App() {
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    const redirectToLogin = () => navigate('/login', { replace: true })
+    window.addEventListener('deployhub:unauthorized', redirectToLogin)
+    return () => window.removeEventListener('deployhub:unauthorized', redirectToLogin)
+  }, [navigate])
+
   return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-text-secondary">Loading DeployHub...</div>}>
     <Routes>
       {/* Public route - no auth required */}
       <Route path="/login" element={<Login />} />
@@ -36,6 +47,7 @@ function App() {
         <Route path="settings" element={<Settings />} />
       </Route>
     </Routes>
+    </Suspense>
   )
 }
 

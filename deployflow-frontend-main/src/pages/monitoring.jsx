@@ -74,8 +74,11 @@ function Monitoring() {
       <div>
         <h1 className="text-2xl font-bold">Monitoring</h1>
         <p className="text-text-secondary text-sm mt-1">
-          Real-time infrastructure health and resource usage
+          Infrastructure metrics and pod telemetry
         </p>
+      </div>
+      <div className="rounded-lg border border-status-pending/30 bg-status-pending/10 px-4 py-3 text-sm text-status-pending">
+        Demo data only — live Kubernetes metrics are not connected in this MVP.
       </div>
 
       {/* Summary Cards */}

@@ -1,6 +1,8 @@
 import { Bell, Search, User, Menu, LogOut } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { logoutUser } from '../utils/auth'
+import { apiRequest } from '../utils/api'
 
 /**
  * Top Navbar
@@ -11,6 +13,13 @@ import { logoutUser } from '../utils/auth'
  */
 function Navbar({ onMenuClick }) {
   const navigate = useNavigate()
+  const [email, setEmail] = useState('')
+
+  useEffect(() => {
+    apiRequest('/auth/me')
+      .then(({ user }) => setEmail(user.email))
+      .catch(() => setEmail('Account unavailable'))
+  }, [])
 
   const handleLogout = () => {
     logoutUser()
@@ -48,8 +57,8 @@ function Navbar({ onMenuClick }) {
             <User size={16} className="text-white" />
           </div>
           <div className="text-sm hidden sm:block">
-            <p className="font-medium leading-tight">Dev User</p>
-            <p className="text-text-tertiary text-xs leading-tight">Admin</p>
+            <p className="font-medium leading-tight">{email || 'DeployHub user'}</p>
+            <p className="text-text-tertiary text-xs leading-tight">Workspace</p>
           </div>
         </div>
 

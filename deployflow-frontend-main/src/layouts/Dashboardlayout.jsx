@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { AnimatePresence } from 'framer-motion'
 import Sidebar from '../components/Sidebar'
-import Navbar from '../components/Navbar'
+import Navbar from '../components/navbar'
 import PageTransition from '../components/PageTransition'
 
 /**

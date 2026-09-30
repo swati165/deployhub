@@ -53,7 +53,7 @@ function Sidebar({ isOpen, onClose }) {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-primary to-brand-secondary flex items-center justify-center">
               <Boxes size={18} className="text-white" />
             </div>
-            <span className="font-bold text-lg tracking-tight">DeployFlow</span>
+            <span className="font-bold text-lg tracking-tight">DeployHub</span>
           </div>
           {/* Close button - only visible on mobile */}
           <button onClick={onClose} className="lg:hidden text-text-secondary hover:text-text-primary">
@@ -84,7 +84,7 @@ function Sidebar({ isOpen, onClose }) {
         </nav>
 
         <div className="px-6 py-4 border-t border-border-subtle">
-          <p className="text-xs text-text-tertiary">v1.0.0 — Production</p>
+          <p className="text-xs text-text-tertiary">MVP · Deployment worker optional</p>
         </div>
       </aside>
     </>
