@@ -32,7 +32,6 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
-    restart: unless-stopped
     healthcheck:
       test:
         - CMD
