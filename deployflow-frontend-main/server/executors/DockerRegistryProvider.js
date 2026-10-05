@@ -27,13 +27,13 @@ export class DockerRegistryProvider extends RegistryProvider {
   } = {}) {
     super()
     validateRegistryConfig(config)
+    this.#config = Object.freeze({ ...config })
     if (typeof command !== 'string' || !command || typeof run !== 'function' || typeof clock !== 'function') {
       throw new RegistryProviderError('REGISTRY_CONFIGURATION_INVALID', 'Registry provider configuration is invalid.')
     }
     this.name = 'docker-registry'
     this.registry = this.#config.registry
     this.repository = this.#config.repository
-    this.#config = Object.freeze({ ...config })
     this.#command = command
     this.#clock = clock
     this.#run = run
