@@ -3,13 +3,21 @@ import path from 'node:path'
 
 const DOCKER_ID_PATTERN = /^[0-9a-f]{12,64}$/i
 const RUNTIME_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+const MAX_APPLICATION_IMAGE_ARCHIVE_BYTES = 512 * 1024 * 1024
 
 export class DockerCliRuntime {
   #command
+  #commandRunner
 
-  constructor({ command = process.env.DOCKER_EXECUTABLE || 'docker' } = {}) {
-    if (typeof command !== 'string' || !command) throw new TypeError('Docker executable is invalid.')
+  constructor({
+    command = process.env.DOCKER_EXECUTABLE || 'docker',
+    run = runBoundedCommand,
+  } = {}) {
+    if (typeof command !== 'string' || !command || typeof run !== 'function') {
+      throw new TypeError('Docker runtime configuration is invalid.')
+    }
     this.#command = command
+    this.#commandRunner = run
   }
 
   async create({ image, input, correlation, name }) {
@@ -96,6 +104,39 @@ export class DockerCliRuntime {
       throw new Error('Docker returned an invalid application image ID.')
     }
     return { imageId: image.Id, config: image.Config }
+  }
+
+  async exportApplicationImage({ reference, digest, timeoutMs = 120_000, signal }) {
+    if (typeof reference !== 'string' || !/^deployhub-app:[a-f0-9]{24}$/.test(reference)
+      || typeof digest !== 'string' || !/^sha256:[a-f0-9]{64}$/i.test(digest)
+      || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) {
+      throw new Error('Application image export arguments are invalid.')
+    }
+
+    const inspected = await this.#commandRunner(this.#command, [
+      'image', 'inspect', reference, '--format', '{{.Id}}',
+    ], { timeoutMs: Math.min(timeoutMs, 10_000), maxOutputBytes: 1024 })
+    if (inspected.code !== 0 || inspected.stdout.trim().toLowerCase() !== digest.toLowerCase()) {
+      throw new Error('Local application image does not match the expected immutable image ID.')
+    }
+
+    const exported = await this.#commandRunner(this.#command, ['image', 'save', digest], {
+      timeoutMs,
+      maxOutputBytes: MAX_APPLICATION_IMAGE_ARCHIVE_BYTES,
+      signal,
+      binaryOutput: true,
+    })
+    if (exported.code !== 0 || !Buffer.isBuffer(exported.stdout)
+      || exported.stdout.byteLength === 0
+      || exported.stdout.byteLength > MAX_APPLICATION_IMAGE_ARCHIVE_BYTES) {
+      throw new Error('Application image archive export failed or exceeded its size limit.')
+    }
+    return {
+      format: 'DOCKER_IMAGE_ARCHIVE',
+      reference,
+      digest: digest.toLowerCase(),
+      archive: exported.stdout,
+    }
   }
 
   async removeApplicationImage(reference, policy) {
