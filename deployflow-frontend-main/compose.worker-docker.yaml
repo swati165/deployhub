@@ -1,0 +1,13 @@
+services:
+  worker:
+    build:
+      args:
+        INSTALL_DOCKER_CLI: "true"
+    group_add:
+      - "${DOCKER_SOCKET_GID:?Set DOCKER_SOCKET_GID to the host Docker socket group ID}"
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - type: bind
+        source: ${DOCKER_SOCKET_PATH:?Set DOCKER_SOCKET_PATH to the trusted host Docker socket}
+        target: /var/run/docker.sock

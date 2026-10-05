@@ -32,6 +32,24 @@ must be injected from a secret manager, not committed to `.env.example` or
 source control. The deployment is intentionally marked failed after a
 successful push until Kubernetes deployment is implemented.
 
+The base Compose configuration does not give the worker Docker access. For a
+trusted local development machine only, the optional
+`compose.worker-docker.yaml` override installs Docker CLI in the worker image
+and mounts the configured host Docker socket into the worker service only.
+Set `DOCKER_SOCKET_PATH` to the host socket path and `DOCKER_SOCKET_GID` to its
+numeric group ID, then start the stack with both Compose files:
+
+```sh
+docker compose -f compose.yaml -f compose.worker-docker.yaml up --build -d db api worker
+```
+
+The socket
+grants effectively host-administrator control of that Docker daemon; use this
+only on a machine where the worker is fully trusted, not in a shared or
+multi-tenant deployment. The isolated customer container is not given the
+socket, Docker CLI, or host bind mounts. The override does not change the
+disabled execution or registry defaults.
+
 The real provider checks that the local image exists and matches its recorded
 image ID, authenticates through Docker CLI password stdin, then tags and pushes
 from the trusted worker. It uses a short-lived private Docker config directory
