@@ -6,8 +6,11 @@ import Card from '../components/Card'
 import Badge from '../components/Badge'
 import DeploymentRow from '../components/DeploymentRow'
 import { apiRequest } from '../utils/api'
-
-const activeStatuses = ['queued', 'cloning', 'building', 'pushing', 'deploying']
+import {
+  deploymentStatusLabel,
+  deploymentStatusTone,
+  isActiveDeploymentStatus,
+} from '../utils/deploymentStates'
 
 function ProjectDetails() {
   const { projectId } = useParams()
@@ -36,7 +39,7 @@ function ProjectDetails() {
 
   useEffect(() => { loadProject() }, [loadProject])
   useEffect(() => {
-    if (!deployments.some((deployment) => activeStatuses.includes(deployment.status))) return undefined
+    if (!deployments.some((deployment) => isActiveDeploymentStatus(deployment.status))) return undefined
     const timer = setInterval(loadProject, 4000)
     return () => clearInterval(timer)
   }, [deployments, loadProject])
@@ -63,7 +66,7 @@ function ProjectDetails() {
     )
   }
 
-  const working = deployments.some((deployment) => activeStatuses.includes(deployment.status))
+  const working = deployments.some((deployment) => isActiveDeploymentStatus(deployment.status))
 
   return (
     <div className="space-y-6">
@@ -74,8 +77,8 @@ function ProjectDetails() {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold">{project.name}</h1>
-            <Badge status={project.status === 'live' ? 'success' : project.status === 'failed' ? 'failed' : activeStatuses.includes(project.status) ? 'pending' : 'neutral'}>
-              {project.status}
+            <Badge status={deploymentStatusTone(project.status)}>
+              {deploymentStatusLabel(project.status)}
             </Badge>
           </div>
           <p className="text-text-secondary text-sm mt-1">{project.description || project.repoUrl}</p>

@@ -3,6 +3,10 @@ import { Plus, Search, X, GitBranch, Loader2 } from 'lucide-react'
 import Button from '../components/Button'
 import ProjectCard from '../components/ProjectCard'
 import { apiRequest } from '../utils/api'
+import {
+  isActiveDeploymentStatus,
+  normalizeDeploymentStatus,
+} from '../utils/deploymentStates'
 
 function Projects() {
   const [projects, setProjects] = useState([])
@@ -31,16 +35,17 @@ function Projects() {
 
   const filters = [
     { key: 'all', label: 'All' },
-    { key: 'live', label: 'Live' },
+    { key: 'RUNNING', label: 'Live' },
     { key: 'building', label: 'Building' },
-    { key: 'failed', label: 'Failed' },
+    { key: 'FAILED', label: 'Failed' },
   ]
   const filteredProjects = useMemo(() => projects.filter((project) => {
     const matchesSearch = `${project.name} ${project.description} ${project.repoUrl}`
       .toLowerCase().includes(searchTerm.toLowerCase())
-    const isBuilding = ['queued', 'cloning', 'building', 'pushing', 'deploying'].includes(project.status)
+    const status = normalizeDeploymentStatus(project.status)
+    const isBuilding = isActiveDeploymentStatus(status)
     const matchesFilter = activeFilter === 'all'
-      || (activeFilter === 'building' ? isBuilding : project.status === activeFilter)
+      || (activeFilter === 'building' ? isBuilding : status === activeFilter)
     return matchesSearch && matchesFilter
   }), [projects, searchTerm, activeFilter])
 

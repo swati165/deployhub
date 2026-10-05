@@ -9,10 +9,12 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "server": "node server/index.js",
+    "worker": "node server/worker.js",
+    "test": "npm run test:server",
     "test:server": "node --test server/*.test.js",
-    "backend:up": "docker compose up --build -d db api",
-    "backend:down": "docker compose stop api db",
-    "app:up": "docker compose up --build -d db api caddy"
+    "backend:up": "docker compose up --build -d db api worker",
+    "backend:down": "docker compose stop worker api db",
+    "app:up": "docker compose up --build -d db api worker caddy"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

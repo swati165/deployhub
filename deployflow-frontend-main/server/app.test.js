@@ -63,6 +63,50 @@ test('registration hashes passwords, login issues a session, and /me verifies it
   assert.equal(rejected.status, 400)
 })
 
+test('deployment detail API normalizes legacy status and stage values during compatibility', async (context) => {
+  const userId = randomUUID()
+  const deploymentId = randomUUID()
+  const secret = 'test-secret-with-more-than-32-bytes'
+  const pool = {
+    async query(statement) {
+      const sql = statement.replace(/\s+/g, ' ').trim().toLowerCase()
+      if (sql.startsWith('select id, email from users')) return { rows: [{ id: userId, email: 'api@example.test' }] }
+      if (sql.startsWith('select d.id, d.project_id')) {
+        return {
+          rows: [{
+            id: deploymentId,
+            project_id: randomUUID(),
+            project_name: 'Compatibility project',
+            branch: 'main',
+            status: 'pushing',
+            stage: 'pushing',
+            stack: 'Node.js',
+            image: null,
+            live_url: null,
+            error: null,
+            author: 'api@example.test',
+            created_at: new Date('2025-01-01T00:00:00Z'),
+            updated_at: new Date('2025-01-01T00:00:00Z'),
+          }],
+        }
+      }
+      if (sql.startsWith('select id, level as type')) return { rows: [] }
+      throw new Error(`Unexpected test query: ${sql}`)
+    },
+  }
+  const server = createApp({ pool, tokenSecret: secret }).listen(0, '127.0.0.1')
+  await new Promise((resolve) => server.once('listening', resolve))
+  context.after(() => new Promise((resolve) => server.close(resolve)))
+  const token = jwt.sign({ sub: userId, email: 'api@example.test' }, secret, { expiresIn: '12h' })
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/deployments/${deploymentId}`, {
+    headers: { authorization: `Bearer ${token}` },
+  })
+  assert.equal(response.status, 200)
+  const { deployment } = await response.json()
+  assert.equal(deployment.status, 'PUSHING_IMAGE')
+  assert.equal(deployment.stage, 'PUSHING_IMAGE')
+})
+
 test('settings persist profile and notifications and API keys authenticate without exposing stored secrets', async (context) => {
   const userId = randomUUID()
   const secret = 'test-secret-with-more-than-32-bytes'

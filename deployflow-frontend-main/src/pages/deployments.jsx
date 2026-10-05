@@ -3,8 +3,7 @@ import { Filter, Loader2 } from 'lucide-react'
 import Card from '../components/Card'
 import DeploymentRow from '../components/DeploymentRow'
 import { apiRequest } from '../utils/api'
-
-const activeStatuses = ['queued', 'cloning', 'building', 'pushing', 'deploying']
+import { isActiveDeploymentStatus, normalizeDeploymentStatus } from '../utils/deploymentStates'
 
 function DeploymentsPage() {
   const [deployments, setDeployments] = useState([])
@@ -27,21 +26,22 @@ function DeploymentsPage() {
 
   useEffect(() => { loadDeployments() }, [loadDeployments])
   useEffect(() => {
-    if (!deployments.some((deployment) => activeStatuses.includes(deployment.status))) return undefined
+    if (!deployments.some((deployment) => isActiveDeploymentStatus(deployment.status))) return undefined
     const timer = setInterval(loadDeployments, 4000)
     return () => clearInterval(timer)
   }, [deployments, loadDeployments])
 
   const statusFilters = [
     { key: 'all', label: 'All' },
-    { key: 'live', label: 'Live' },
+    { key: 'RUNNING', label: 'Live' },
     { key: 'building', label: 'In progress' },
-    { key: 'failed', label: 'Failed' },
+    { key: 'FAILED', label: 'Failed' },
   ]
   const projectOptions = useMemo(() => [...new Set(deployments.map((deployment) => deployment.project))], [deployments])
   const filteredDeployments = useMemo(() => deployments.filter((deployment) => {
+    const status = normalizeDeploymentStatus(deployment.status)
     const matchesStatus = statusFilter === 'all'
-      || (statusFilter === 'building' ? activeStatuses.includes(deployment.status) : deployment.status === statusFilter)
+      || (statusFilter === 'building' ? isActiveDeploymentStatus(status) : status === statusFilter)
     return matchesStatus && (projectFilter === 'all' || deployment.project === projectFilter)
   }), [deployments, statusFilter, projectFilter])
 

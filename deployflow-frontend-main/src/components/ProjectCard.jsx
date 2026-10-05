@@ -2,6 +2,11 @@ import { useNavigate } from 'react-router-dom'
 import { GitBranch, Rocket, ChevronRight } from 'lucide-react'
 import Card from './Card'
 import Badge from './Badge'
+import {
+  deploymentStatusLabel,
+  deploymentStatusTone,
+  isActiveDeploymentStatus,
+} from '../utils/deploymentStates'
 
 /**
  * ProjectCard
@@ -14,15 +19,7 @@ import Badge from './Badge'
 function ProjectCard({ project }) {
   const navigate = useNavigate()
 
-  // Maps project.status -> Badge's status prop (they use the same naming,
-  // except 'building' maps to 'pending' since that's our Badge convention)
-  const badgeStatus = project.status === 'live'
-    ? 'success'
-    : project.status === 'failed'
-      ? 'failed'
-      : ['queued', 'cloning', 'building', 'pushing', 'deploying'].includes(project.status)
-        ? 'pending'
-        : 'neutral'
+  const badgeStatus = deploymentStatusTone(project.status)
   const stack = project.techStack || (project.stack ? [project.stack] : [])
 
   return (
@@ -35,8 +32,8 @@ function ProjectCard({ project }) {
             {project.description}
           </p>
         </div>
-        <Badge status={badgeStatus} pulse={['queued', 'cloning', 'building', 'pushing', 'deploying'].includes(project.status)}>
-          {project.status}
+        <Badge status={badgeStatus} pulse={isActiveDeploymentStatus(project.status)}>
+          {deploymentStatusLabel(project.status)}
         </Badge>
       </div>
 

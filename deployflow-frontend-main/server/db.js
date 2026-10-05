@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises'
-import { fileURLToPath } from 'node:url'
 import pg from 'pg'
 
 const { Pool } = pg
@@ -15,9 +13,3 @@ export const pool = new Pool({
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
 })
-
-export async function migrate() {
-  const schemaUrl = new URL('./schema.sql', import.meta.url)
-  const schema = await readFile(fileURLToPath(schemaUrl), 'utf8')
-  await pool.query(schema)
-}

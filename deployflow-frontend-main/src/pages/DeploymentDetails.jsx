@@ -7,16 +7,14 @@ import Badge from '../components/Badge'
 import DeploymentTimeline from '../components/DeploymentTimeline'
 import TerminalLogViewer from '../components/TerminalLogViewer'
 import { apiRequest } from '../utils/api'
+import {
+  deploymentStageLabel,
+  deploymentStatusLabel,
+  deploymentStatusTone,
+  isActiveDeploymentStatus,
+} from '../utils/deploymentStates'
 
-const timelineStages = ['Queued', 'Cloning', 'Building', 'Pushing', 'Deploying', 'Live']
-const activeStatuses = ['queued', 'cloning', 'building', 'pushing', 'deploying']
-
-function statusColor(status) {
-  if (status === 'live') return 'success'
-  if (status === 'failed') return 'failed'
-  if (activeStatuses.includes(status)) return 'pending'
-  return 'neutral'
-}
+const timelineStages = ['Queued', 'Validating', 'Cloning', 'Building', 'Pushing image', 'Deploying', 'Running']
 
 function displayTime(value) {
   if (!value) return '—'
@@ -44,7 +42,7 @@ function DeploymentDetails() {
 
   useEffect(() => { loadDeployment() }, [loadDeployment])
   useEffect(() => {
-    if (!deployment || !activeStatuses.includes(deployment.status)) return undefined
+    if (!deployment || !isActiveDeploymentStatus(deployment.status)) return undefined
     const timer = setInterval(loadDeployment, 2500)
     return () => clearInterval(timer)
   }, [deployment, loadDeployment])
@@ -68,9 +66,11 @@ function DeploymentDetails() {
         <div>
           <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-xl font-bold">{deployment.project}</h1>
-            <Badge status={statusColor(deployment.status)} pulse={activeStatuses.includes(deployment.status)}>{deployment.status}</Badge>
+            <Badge status={deploymentStatusTone(deployment.status)} pulse={isActiveDeploymentStatus(deployment.status)}>
+              {deploymentStatusLabel(deployment.status)}
+            </Badge>
           </div>
-          <p className="text-text-secondary text-sm mt-1">Branch {deployment.branch} · {deployment.stage}</p>
+          <p className="text-text-secondary text-sm mt-1">Branch {deployment.branch} · {deploymentStageLabel(deployment.stage)}</p>
         </div>
         {deployment.liveUrl && (
           <a href={deployment.liveUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm text-status-success hover:underline">

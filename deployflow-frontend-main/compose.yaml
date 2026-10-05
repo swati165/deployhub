@@ -2,16 +2,16 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: deployhub
-      POSTGRES_USER: deployhub
-      POSTGRES_PASSWORD: local_dev_only
+      POSTGRES_DB: ${DEPLOYHUB_DB_NAME:-deployhub}
+      POSTGRES_USER: ${DEPLOYHUB_DB_USER:-deployhub}
+      POSTGRES_PASSWORD: ${DEPLOYHUB_DB_PASSWORD:-local_dev_only}
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - deployhub-postgres:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U deployhub -d deployhub"]
+      test: ["CMD-SHELL", "pg_isready -U ${DEPLOYHUB_DB_USER:-deployhub} -d ${DEPLOYHUB_DB_NAME:-deployhub}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -21,11 +21,11 @@ services:
       context: .
       dockerfile: Dockerfile.api
     environment:
-      DATABASE_URL: postgresql://deployhub:local_dev_only@db:5432/deployhub
+      DATABASE_URL: "postgresql://${DEPLOYHUB_DB_USER:-deployhub}:${DEPLOYHUB_DB_PASSWORD:-local_dev_only}@db:5432/${DEPLOYHUB_DB_NAME:-deployhub}"
       DATABASE_SSL: "false"
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env before starting the API}
       PORT: "5000"
-      FRONTEND_ORIGIN: http://localhost:5000
+      FRONTEND_ORIGIN: http://localhost:5173
     ports:
       - "127.0.0.1:5000:5000"
     depends_on:
@@ -42,6 +42,36 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["node", "server/worker.js"]
+    environment:
+      DATABASE_URL: "postgresql://${DEPLOYHUB_DB_USER:-deployhub}:${DEPLOYHUB_DB_PASSWORD:-local_dev_only}@db:5432/${DEPLOYHUB_DB_NAME:-deployhub}"
+      DATABASE_SSL: "false"
+      EXECUTION_PROVIDER: ${EXECUTION_PROVIDER:-disabled}
+      ISOLATED_EXECUTOR_ENABLED: ${ISOLATED_EXECUTOR_ENABLED:-false}
+      ISOLATED_EXECUTOR_IMAGE: ${ISOLATED_EXECUTOR_IMAGE:-}
+      SOURCE_RESOLVER: ${SOURCE_RESOLVER:-disabled}
+      GITHUB_SOURCE_TOKEN: ${GITHUB_SOURCE_TOKEN:-}
+      REGISTRY_PUSH_ENABLED: ${REGISTRY_PUSH_ENABLED:-false}
+      REGISTRY_PROVIDER: ${REGISTRY_PROVIDER:-disabled}
+      REGISTRY_HOST: ${REGISTRY_HOST:-}
+      REGISTRY_REPOSITORY: ${REGISTRY_REPOSITORY:-}
+      REGISTRY_TAGS_IMMUTABLE: ${REGISTRY_TAGS_IMMUTABLE:-false}
+      REGISTRY_USERNAME: ${REGISTRY_USERNAME:-}
+      REGISTRY_PASSWORD: ${REGISTRY_PASSWORD:-}
+      JOB_POLL_INTERVAL_MS: ${JOB_POLL_INTERVAL_MS:-1000}
+      JOB_LEASE_MS: ${JOB_LEASE_MS:-30000}
+      JOB_HEARTBEAT_INTERVAL_MS: ${JOB_HEARTBEAT_INTERVAL_MS:-10000}
+      JOB_RETRY_BASE_MS: ${JOB_RETRY_BASE_MS:-5000}
+      JOB_RETRY_MAX_MS: ${JOB_RETRY_MAX_MS:-300000}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
 
   caddy:
     image: caddy:2-alpine

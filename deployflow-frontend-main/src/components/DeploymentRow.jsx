@@ -1,13 +1,11 @@
 import { useNavigate } from 'react-router-dom'
 import { GitCommitHorizontal, User, Clock } from 'lucide-react'
 import Badge from './Badge'
-
-function statusColor(status) {
-  if (status === 'live') return 'success'
-  if (status === 'failed') return 'failed'
-  if (['queued', 'cloning', 'building', 'pushing', 'deploying'].includes(status)) return 'pending'
-  return 'neutral'
-}
+import {
+  deploymentStageLabel,
+  deploymentStatusLabel,
+  deploymentStatusTone,
+} from '../utils/deploymentStates'
 
 function displayTime(value) {
   if (!value) return '—'
@@ -35,8 +33,8 @@ function DeploymentRow({ deployment, showProject = true }) {
     >
       {/* Left: status + commit info */}
       <div className="flex items-center gap-3 sm:w-2/5">
-        <Badge status={statusColor(deployment.status)} pulse={statusColor(deployment.status) === 'pending'}>
-          {deployment.status}
+        <Badge status={deploymentStatusTone(deployment.status)} pulse={deploymentStatusTone(deployment.status) === 'pending'}>
+          {deploymentStatusLabel(deployment.status)}
         </Badge>
         <div className="min-w-0">
           <p className="text-sm font-medium truncate">{deployment.commitMsg || `Deploy ${deployment.branch}`}</p>
@@ -58,7 +56,7 @@ function DeploymentRow({ deployment, showProject = true }) {
 
       {/* Right: duration + time */}
       <div className="flex items-center gap-4 sm:w-1/5 justify-end text-xs text-text-tertiary">
-        <span className="capitalize">{deployment.duration || deployment.stage || '—'}</span>
+        <span>{deployment.duration || (deployment.stage ? deploymentStageLabel(deployment.stage) : '—')}</span>
         <span className="flex items-center gap-1">
           <Clock size={12} /> {displayTime(deployment.createdAt || deployment.time)}
         </span>

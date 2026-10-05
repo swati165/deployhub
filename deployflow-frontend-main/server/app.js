@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url'
 import { rateLimit } from 'express-rate-limit'
 import helmet from 'helmet'
 import jwt from 'jsonwebtoken'
-import { enqueueDeployment } from './pipeline.js'
+import { normalizeDeploymentStage, normalizeDeploymentStatus } from './deploymentStates.js'
+import { enqueueDeployment } from './jobQueue.js'
 import { validateBranch, validateGitHubUrl, ValidationError } from './validation.js'
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -57,7 +58,7 @@ function relativeFields(row) {
     description: row.description,
     repoUrl: row.repo_url,
     branch: row.branch,
-    status: row.status ?? 'idle',
+    status: row.status == null ? 'idle' : normalizeDeploymentStatus(row.status),
     stack: row.stack ?? null,
     deploymentsCount: Number(row.deployments_count ?? 0),
     lastDeployed: row.last_deployed ?? null,
@@ -85,8 +86,8 @@ function deploymentFields(row) {
     projectId: row.project_id,
     project: row.project_name,
     branch: row.branch,
-    status: row.status,
-    stage: row.stage,
+    status: normalizeDeploymentStatus(row.status),
+    stage: normalizeDeploymentStage(row.stage),
     stack: row.stack,
     image: row.image,
     liveUrl: row.live_url,
@@ -295,9 +296,12 @@ export function createApp({
       pool.query('SELECT COUNT(*)::int AS count FROM projects WHERE user_id = $1', [req.auth.sub]),
       pool.query(
         `SELECT COUNT(*)::int AS total,
-          COUNT(*) FILTER (WHERE status IN ('queued','cloning','building','pushing','deploying'))::int AS active,
-          COUNT(*) FILTER (WHERE status = 'live')::int AS live,
-          COUNT(*) FILTER (WHERE status = 'failed')::int AS failed
+          COUNT(*) FILTER (WHERE status IN (
+            'queued','cloning','building','pushing','deploying',
+            'QUEUED','VALIDATING','CLONING','BUILDING','PUSHING_IMAGE','DEPLOYING'
+          ))::int AS active,
+          COUNT(*) FILTER (WHERE status IN ('live','RUNNING'))::int AS live,
+          COUNT(*) FILTER (WHERE status IN ('failed','FAILED'))::int AS failed
          FROM deployments WHERE user_id = $1`,
         [req.auth.sub],
       ),
@@ -383,33 +387,35 @@ export function createApp({
     )
     if (!project.rows[0]) return res.status(404).json({ error: 'Project not found.' })
     const chosenBranch = branch ?? project.rows[0].branch
-    const result = await pool.query(
-      `INSERT INTO deployments (project_id, user_id, branch)
-       VALUES ($1, $2, $3) RETURNING id`,
-      [project.rows[0].id, req.auth.sub, chosenBranch],
-    )
-    const deploymentId = result.rows[0].id
-    await pool.query(
-      'INSERT INTO deployment_logs (deployment_id, level, message) VALUES ($1, $2, $3)',
-      [deploymentId, 'info', 'Deployment queued.'],
-    )
-    const queued = enqueueDeployment(pool, {
-      id: deploymentId,
-      repo_url: project.rows[0].repo_url,
-      branch: chosenBranch,
-    })
-    if (!queued) {
-      const message = 'Deployment queue is full. Try again when an active deployment finishes.'
-      await pool.query(
-        `UPDATE deployments SET status = 'failed', error = $2, updated_at = NOW() WHERE id = $1`,
-        [deploymentId, message],
+    const client = await pool.connect()
+    let deploymentId
+    try {
+      await client.query('BEGIN')
+      const result = await client.query(
+        `INSERT INTO deployments (project_id, user_id, branch, status, stage)
+         VALUES ($1, $2, $3, 'QUEUED', 'QUEUED') RETURNING id`,
+        [project.rows[0].id, req.auth.sub, chosenBranch],
       )
-      await pool.query(
+      deploymentId = result.rows[0].id
+      await client.query(
         'INSERT INTO deployment_logs (deployment_id, level, message) VALUES ($1, $2, $3)',
-        [deploymentId, 'error', message],
+        [deploymentId, 'info', 'Deployment queued.'],
       )
+      await enqueueDeployment(client, deploymentId)
+      await client.query('COMMIT')
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
     }
-    res.status(202).json({ deployment: { id: deploymentId, status: queued ? 'queued' : 'failed' } })
+    res.status(202).json({
+      deployment: {
+        id: deploymentId,
+        status: 'QUEUED',
+        stage: 'QUEUED',
+      },
+    })
   }))
 
   app.get('/api/deployments', auth, asyncRoute(async (req, res) => {

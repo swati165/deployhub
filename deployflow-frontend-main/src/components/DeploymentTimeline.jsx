@@ -1,5 +1,9 @@
 import { motion } from 'framer-motion'
 import { Check, X, Loader2 } from 'lucide-react'
+import {
+  deploymentTimelineStep,
+  normalizeDeploymentStatus,
+} from '../utils/deploymentStates'
 
 /**
  * DeploymentTimeline
@@ -11,18 +15,40 @@ import { Check, X, Loader2 } from 'lucide-react'
  * - status: 'success' | 'failed' | 'pending' — determines how far the timeline fills
  */
 function DeploymentTimeline({ stages, status, stage = status }) {
-  const normalizedStage = stage?.toLowerCase()
-  const stageIndex = stages.findIndex((item) => item.toLowerCase() === normalizedStage)
-  const currentStepIndex = status === 'live'
+  const normalizedStatus = normalizeDeploymentStatus(status)
+  const knownStatus = [
+    'QUEUED',
+    'VALIDATING',
+    'CLONING',
+    'BUILDING',
+    'PUSHING_IMAGE',
+    'DEPLOYING',
+    'RUNNING',
+    'FAILED',
+  ].includes(normalizedStatus)
+  const stageIndex = knownStatus ? deploymentTimelineStep(stage) : -1
+  const currentStepIndex = normalizedStatus === 'RUNNING'
     ? stages.length - 1
-    : Math.max(stageIndex, 0)
+    : stageIndex
+  const isFailedStatus = normalizedStatus === 'FAILED'
+  const isRunning = normalizedStatus === 'RUNNING'
+  const isUnknown = !knownStatus || currentStepIndex < 0
 
   return (
-    <div className="flex items-center w-full">
+    <div>
+      {!isUnknown && stage && (
+        <p className="text-xs text-text-secondary mb-4" aria-live="polite">
+          Current stage: {stage.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())}
+        </p>
+      )}
+      {isUnknown && !isRunning && !isFailedStatus && (
+        <p className="text-xs text-text-secondary mb-4">Unrecognized deployment status or stage; progress is unavailable.</p>
+      )}
+      <div className="flex items-center w-full overflow-x-auto pb-2">
       {stages.map((stage, index) => {
-        const isComplete = index < currentStepIndex || (status === 'live' && index <= currentStepIndex)
-        const isCurrent = index === currentStepIndex && status !== 'live'
-        const isFailed = isCurrent && status === 'failed'
+        const isComplete = !isUnknown && (index < currentStepIndex || (isRunning && index <= currentStepIndex))
+        const isCurrent = !isUnknown && index === currentStepIndex && !isRunning
+        const isFailed = isCurrent && isFailedStatus
         const isLast = index === stages.length - 1
 
         return (
@@ -71,7 +97,7 @@ function DeploymentTimeline({ stages, status, stage = status }) {
               <div className="flex-1 h-0.5 mx-2 mb-5 relative overflow-hidden bg-border-subtle">
                 <motion.div
                   initial={{ width: 0 }}
-                  animate={{ width: index < currentStepIndex ? '100%' : '0%' }}
+                  animate={{ width: !isUnknown && (index < currentStepIndex || isRunning) ? '100%' : '0%' }}
                   transition={{ duration: 0.5, delay: index * 0.1 }}
                   className="h-full bg-status-success absolute left-0 top-0"
                 />
@@ -80,6 +106,7 @@ function DeploymentTimeline({ stages, status, stage = status }) {
           </div>
         )
       })}
+      </div>
     </div>
   )
 }
