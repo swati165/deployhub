@@ -12,6 +12,8 @@ import {
 } from './RegistryProvider.js'
 
 const DIGEST_PATTERN = /sha256:[a-f0-9]{64}/i
+const MAX_APPLICATION_IMAGE_ARCHIVE_BYTES = 512 * 1024 * 1024
+const MAX_IMAGE_OPERATION_TIMEOUT_MS = 120_000
 
 export class DockerRegistryProvider extends RegistryProvider {
   #config
@@ -39,7 +41,7 @@ export class DockerRegistryProvider extends RegistryProvider {
     this.#run = run
   }
 
-  async push(request, { assertLease } = {}) {
+  async push(request, { assertLease, signal } = {}) {
     validateRegistryPushRequest(request)
     await assertLease?.()
     const tag = createRegistryTag(request)
@@ -50,7 +52,7 @@ export class DockerRegistryProvider extends RegistryProvider {
       const inspect = await this.#run(this.#command, [
         '--config', configDirectory, 'image', 'inspect', request.localImage.reference,
         '--format', '{{.Id}}',
-      ], commandOptions())
+      ], commandOptions({ signal }))
       if (inspect.code !== 0) {
         throw new RegistryProviderError('LOCAL_IMAGE_NOT_FOUND', 'Local application image was not found.')
       }
@@ -62,7 +64,7 @@ export class DockerRegistryProvider extends RegistryProvider {
       const login = await this.#run(this.#command, [
         '--config', configDirectory, 'login', this.#config.registry,
         '--username', this.#config.username, '--password-stdin',
-      ], commandOptions({ input: this.#config.password }))
+      ], commandOptions({ input: this.#config.password, signal }))
       if (login.code !== 0) {
         throw new RegistryProviderError('REGISTRY_AUTHENTICATION_FAILED', 'Registry authentication failed.')
       }
@@ -70,7 +72,7 @@ export class DockerRegistryProvider extends RegistryProvider {
       await assertLease?.()
       const existing = await this.#run(this.#command, [
         '--config', configDirectory, 'manifest', 'inspect', '--verbose', target,
-      ], commandOptions())
+      ], commandOptions({ signal }))
       let digest
       if (existing.code === 0) {
         let manifest
@@ -98,14 +100,14 @@ export class DockerRegistryProvider extends RegistryProvider {
 
       const tagged = await this.#run(this.#command, [
         '--config', configDirectory, 'tag', request.localImage.reference, target,
-      ], commandOptions())
+      ], commandOptions({ signal }))
       if (tagged.code !== 0) {
         throw new RegistryProviderError('REGISTRY_PUSH_FAILED', 'Local registry image tagging failed.')
       }
       if (!digest) {
         const pushed = await this.#run(this.#command, [
           '--config', configDirectory, 'push', target,
-        ], commandOptions())
+        ], commandOptions({ signal }))
         if (pushed.code !== 0) {
           throw classifyPushFailure(pushed.stderr)
         }
@@ -146,6 +148,54 @@ export class DockerRegistryProvider extends RegistryProvider {
     } finally {
       await rm(configDirectory, { recursive: true, force: true })
     }
+  }
+
+  async pushArtifact(request, artifact, { assertLease, signal } = {}) {
+    validateRegistryPushRequest(request)
+    validateApplicationImageArtifact(artifact, request)
+    await assertLease?.()
+
+    const configDirectory = await mkdtemp(path.join(os.tmpdir(), 'deployhub-image-load-'))
+    await chmod(configDirectory, 0o700)
+    try {
+      const loaded = await this.#run(this.#command, [
+        '--config', configDirectory, 'image', 'load',
+      ], commandOptions({
+        input: artifact.archive,
+        signal,
+        timeoutMs: MAX_IMAGE_OPERATION_TIMEOUT_MS,
+      }))
+      if (loaded.code !== 0) {
+        throw new RegistryProviderError('LOCAL_IMAGE_NOT_FOUND', 'Exported application image could not be loaded.')
+      }
+
+      const inspected = await this.#run(this.#command, [
+        '--config', configDirectory, 'image', 'inspect', artifact.digest,
+        '--format', '{{.Id}}',
+      ], commandOptions({ signal }))
+      if (inspected.code !== 0 || inspected.stdout.trim().toLowerCase() !== artifact.digest.toLowerCase()) {
+        throw new RegistryProviderError('DUPLICATE_EXECUTION', 'Imported application image does not match its immutable image ID.')
+      }
+
+      await assertLease?.()
+      const tagged = await this.#run(this.#command, [
+        '--config', configDirectory, 'image', 'tag', artifact.digest, artifact.reference,
+      ], commandOptions({ signal }))
+      if (tagged.code !== 0) {
+        throw new RegistryProviderError('REGISTRY_PUSH_FAILED', 'Imported application image could not be tagged for publishing.')
+      }
+    } catch (error) {
+      if (error instanceof RegistryProviderError) throw error
+      if (error?.code === 'STALE_LEASE_GENERATION') throw error
+      if (error?.code === 'COMMAND_TIMEOUT' || error?.code === 'ENOENT') {
+        throw new RegistryProviderError('REGISTRY_UNAVAILABLE', 'Configured Docker runtime is unavailable.', { retryable: true })
+      }
+      throw new RegistryProviderError('REGISTRY_PUSH_FAILED', 'Exported application image could not be prepared for publishing.', { retryable: true })
+    } finally {
+      await rm(configDirectory, { recursive: true, force: true })
+    }
+
+    return this.push(request, { assertLease, signal })
   }
 }
 
@@ -196,7 +246,12 @@ function validateRegistryConfig(config) {
   }
 }
 
-function commandOptions({ input } = {}) {
+function commandOptions({
+  input,
+  signal,
+  timeoutMs = MAX_IMAGE_OPERATION_TIMEOUT_MS,
+  maxOutputBytes = 64 * 1024,
+} = {}) {
   const allowed = ['PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'HOME', 'USERPROFILE']
   const env = Object.fromEntries(allowed
     .filter((key) => typeof process.env[key] === 'string')
@@ -205,8 +260,22 @@ function commandOptions({ input } = {}) {
   return {
     env,
     input,
-    timeoutMs: 120_000,
-    maxOutputBytes: 64 * 1024,
+    signal,
+    timeoutMs,
+    maxOutputBytes,
+  }
+}
+
+function validateApplicationImageArtifact(artifact, request) {
+  if (!artifact || typeof artifact !== 'object' || Array.isArray(artifact)
+    || Object.keys(artifact).sort().join(',') !== 'archive,digest,format,reference'
+    || artifact.format !== 'DOCKER_IMAGE_ARCHIVE'
+    || artifact.reference !== request.localImage.reference
+    || artifact.digest?.toLowerCase() !== request.localImage.digest.toLowerCase()
+    || !Buffer.isBuffer(artifact.archive)
+    || artifact.archive.byteLength < 1
+    || artifact.archive.byteLength > MAX_APPLICATION_IMAGE_ARCHIVE_BYTES) {
+    throw new RegistryProviderError('LOCAL_IMAGE_NOT_FOUND', 'A valid bounded application image archive is required.')
   }
 }
 

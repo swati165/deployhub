@@ -17,6 +17,7 @@ import {
   resolveAndPersistSource,
 } from './executors/SourceResolver.js'
 import { IsolatedVmSupervisor } from './executors/IsolatedVmSupervisor.js'
+import { DockerCliRuntime } from './executors/DockerCliRuntime.js'
 import { reconcileExecutions } from './executionReconciliation.js'
 import {
   RegistryProviderError,
@@ -24,6 +25,7 @@ import {
   validateRegistryPushResult,
 } from './executors/RegistryProvider.js'
 import { DockerRegistryProvider, registryConfigFromEnvironment } from './executors/DockerRegistryProvider.js'
+import { DockerRegistryArtifactProvider } from './executors/DockerRegistryArtifactProvider.js'
 
 const RESOURCE_POLICY = Object.freeze({
   cpuMilli: 1000,
@@ -275,7 +277,7 @@ export async function runDeployment(pool, job, {
         })
       } else {
         registryResult = validateRegistryPushResult(
-          await activeRegistryProvider.push(request, { assertLease: assertCurrentLease }),
+          await activeRegistryProvider.push(request, { assertLease: assertCurrentLease, signal }),
           request,
           {
             registry: activeRegistryProvider.registry,
@@ -339,7 +341,10 @@ function createConfiguredExecutionProvider(pool) {
 
 function createConfiguredRegistryProvider() {
   try {
-    return new DockerRegistryProvider({ config: registryConfigFromEnvironment() })
+    return new DockerRegistryArtifactProvider({
+      runtime: new DockerCliRuntime(),
+      provider: new DockerRegistryProvider({ config: registryConfigFromEnvironment() }),
+    })
   } catch (error) {
     if (!(error instanceof RegistryProviderError)) throw error
     return {
