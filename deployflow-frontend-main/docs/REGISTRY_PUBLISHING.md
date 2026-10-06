@@ -84,3 +84,36 @@ They do not contact an external registry or push an image. The Docker runtime
 integration test covers only the isolated build and local application image;
 no registry or Kubernetes integration service is provisioned by this
 repository.
+
+## Disposable local registry validation
+
+`compose.local-registry.yaml` provides an opt-in, unauthenticated OCI registry
+for local validation only. It is not included by the normal Compose stack. The
+service publishes port `5050` on loopback only, has no persistent volume, and
+uses `pull_policy: never`; the official `registry:2.8.3` image must already be
+available locally. Validation will not pull it from Docker Hub or any other
+registry.
+
+Run the real Docker/registry validation only on a trusted local Docker host:
+
+```sh
+RUN_LOCAL_REGISTRY_INTEGRATION=true node --test server/executors/localRegistry.integration.test.js
+```
+
+The test starts its own uniquely named Compose project, builds only a
+`FROM scratch` fixture with networking and base-image pulls disabled, then
+exercises the bounded image export, trusted artifact import, immutable image
+ID check, deterministic tag, local push, digest lookup, retry reuse, and
+conflicting-identity rejection. Its fake login values are generated locally
+for that process and are not production credentials. The test removes its
+generated images, temporary directories, and registry container when finished.
+Without the opt-in environment variable, the integration test is skipped.
+
+The local registry does not enforce immutable tags. The validation checks
+sequential duplicate/conflict behavior only; it does not establish the
+server-side immutability guarantee required to enable production publishing.
+The database persistence and lease-fencing behavior remain covered by the
+deterministic orchestration and execution-store tests; this local registry
+test does not claim to validate a live PostgreSQL instance. Keep
+`REGISTRY_PUSH_ENABLED=false` and `REGISTRY_PROVIDER=disabled` in normal
+configuration.

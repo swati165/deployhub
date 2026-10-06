@@ -1,0 +1,13 @@
+services:
+  local-registry:
+    image: registry:2.8.3
+    pull_policy: never
+    profiles:
+      - local-validation
+    ports:
+      - "127.0.0.1:5050:5000"
+    restart: "no"
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "2"
