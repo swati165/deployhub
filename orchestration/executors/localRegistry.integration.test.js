@@ -12,7 +12,7 @@ import { createRegistryTag } from './RegistryProvider.js'
 import { runBoundedCommand } from './boundedCommand.js'
 
 const enabled = process.env.RUN_LOCAL_REGISTRY_INTEGRATION === 'true'
-const composeFile = fileURLToPath(new URL('../../compose.local-registry.yaml', import.meta.url))
+const composeFile = fileURLToPath(new URL('../../docker/compose.local-registry.yaml', import.meta.url))
 const registryHost = 'localhost:5051'
 const registryRepository = 'deployhub/validation'
 const MANIFEST_ACCEPT = [
