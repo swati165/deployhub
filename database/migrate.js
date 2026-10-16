@@ -311,7 +311,7 @@ export async function assertSchemaVersion(pool, requiredVersion = BASELINE_VERSI
   } catch (error) {
     if (error.code === '42P01') {
       throw new MigrationError(
-        `Database schema is not initialized. Run "node server/migrate.js" before starting the API.`,
+        `Database schema is not initialized. Run "npm run migrate" before starting the API.`,
         { cause: error },
       )
     }
@@ -319,14 +319,14 @@ export async function assertSchemaVersion(pool, requiredVersion = BASELINE_VERSI
   }
   if (!result.rows.length) {
     throw new MigrationError(
-      `Database schema is missing required migration ${requiredVersion}. Run "node server/migrate.js" before starting the API.`,
+      `Database schema is missing required migration ${requiredVersion}. Run "npm run migrate" before starting the API.`,
     )
   }
 }
 
 const isMain = process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
 if (isMain) {
-  const { pool } = await import('./db.js')
+  const { pool } = await import('../backend/db.js')
   try {
     const result = await runMigrations(pool)
     for (const migration of result.applied) {

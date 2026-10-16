@@ -14,9 +14,11 @@ RUN if [ "$INSTALL_DOCKER_CLI" = "true" ]; then apk add --no-cache docker-cli do
 WORKDIR /app
 COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
-COPY --from=build --chown=node:node /app/server ./server
+COPY --from=build --chown=node:node /app/backend ./backend
+COPY --from=build --chown=node:node /app/orchestration ./orchestration
+COPY --from=build --chown=node:node /app/database ./database
 COPY --from=build --chown=node:node /app/dist ./dist
 
 USER node
 EXPOSE 5000
-CMD ["node", "server/index.js"]
+CMD ["node", "backend/index.js"]

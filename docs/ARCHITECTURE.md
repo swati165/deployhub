@@ -24,27 +24,27 @@ Caddy (VM Compose deployment; local development can use Vite)
     |                              |
     |                              | /api requests
     v                              v
-                    Express API (server/app.js)
+                    Express API (backend/app.js)
                       |          |
                  auth/API    PostgreSQL <----- Deployment worker
-                      |          |             (server/worker.js)
+                      |          |             (orchestration/worker.js)
                       v          |                    |
                   JWT/API key    +--- deployment_jobs |
                                                    orchestrator
                                                (execution disabled)
 ```
 
-`deployflow-frontend-main/src/utils/api.js` centralizes browser API calls.
-`server/app.js` contains authentication middleware, route handlers, validation
+`frontend/src/utils/api.js` centralizes browser API calls.
+`backend/app.js` contains authentication middleware, route handlers, validation
 calls, and response shaping. It queries PostgreSQL with parameterized SQL.
-`server/schema.sql` is the retained current-schema reference. The immutable
-`server/migrations/0001_baseline.sql` is byte-for-byte identical to it.
-`server/migrate.js` runs separately from API startup, verifies/adopts a matching
+`database/schema.sql` is the retained current-schema reference. The immutable
+`database/migrations/0001_baseline.sql` is byte-for-byte identical to it.
+`database/migrate.js` runs separately from API startup, verifies/adopts a matching
 existing baseline or applies it to a fresh database, records SHA-256 checksums,
 and serializes migration runners with a PostgreSQL advisory lock. API and worker startup require migrations through `0006` and fail clearly if
 they have not run. API startup does not mutate active deployments.
-`server/jobQueue.js` owns only durable internal job state and claims;
-`server/deploymentOrchestrator.js` owns deployment lifecycle transitions.
+`orchestration/jobQueue.js` owns only durable internal job state and claims;
+`orchestration/deploymentOrchestrator.js` owns deployment lifecycle transitions.
 The API routes and deployment orchestration are not yet split into the full
 service/repository architecture pictured in the UML.
 
@@ -279,9 +279,9 @@ review schema changes.
 
 Implemented in Phases 2A and 2B:
 
-1. `server/migrations/0001_baseline.sql` preserves the current `schema.sql`
+1. `database/migrations/0001_baseline.sql` preserves the current `schema.sql`
    byte-for-byte. `schema.sql` remains in place; it is not executed on startup.
-2. `server/migrate.js` discovers versioned SQL files in lexical order, hashes
+2. `database/migrate.js` discovers versioned SQL files in lexical order, hashes
    exact bytes using SHA-256, and rejects missing, changed, or out-of-order
    applied migrations.
 3. For a fresh database, the baseline SQL and its history row commit together.

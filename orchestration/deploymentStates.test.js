@@ -15,7 +15,7 @@ import {
   isActiveDeploymentStatus as isFrontendActiveStatus,
   normalizeDeploymentStatus as normalizeFrontendStatus,
   deploymentStatusTone as frontendStatusTone,
-} from '../src/utils/deploymentStates.js'
+} from '../frontend/src/utils/deploymentStates.js'
 
 test('normalizes legacy statuses and stages without treating unknown states as successful', () => {
   assert.equal(normalizeDeploymentStatus('live'), 'RUNNING')

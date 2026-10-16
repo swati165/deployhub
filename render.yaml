@@ -12,7 +12,6 @@ services:
     plan: free
     region: singapore
     branch: swati165-deployhub-mvp
-    rootDir: deployflow-frontend-main
     buildCommand: npm ci && npm run build
     startCommand: npm run server
     healthCheckPath: /api/health

@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-This is the contract implemented by `deployflow-frontend-main/server/app.js`.
+This is the contract implemented by `backend/app.js`.
 It records current paths, authorization, response shapes, and error behavior.
 Deployment responses use uppercase canonical statuses; legacy lowercase rows
 are normalized during the compatibility window.

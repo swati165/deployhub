@@ -1,5 +1,5 @@
 import { DEPLOYMENT_STAGES } from '../deploymentStates.js'
-import { validateBranch, validateGitHubUrl } from '../validation.js'
+import { validateBranch, validateGitHubUrl } from '../../backend/validation.js'
 
 export const EXECUTION_INPUT_VERSION = 1
 export const EXECUTION_RESULT_VERSION = 2

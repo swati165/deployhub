@@ -8,6 +8,15 @@ DeployHub is a React dashboard and Express API for connecting GitHub projects, t
 - PostgreSQL 13+
 - For real deployments only: a dedicated isolated worker with Git, Docker CLI, kubectl, an authenticated container registry, and a Kubernetes cluster with an Ingress controller and TLS secret
 
+## Repository layout
+
+- `frontend/` — React/Vite application.
+- `backend/` — Express API and database connection.
+- `orchestration/` — durable jobs, worker, deployment lifecycle, and execution providers.
+- `database/` — PostgreSQL schema, migrations, and migration runner.
+- `docker/` — Dockerfile, Compose configurations, and Caddy config.
+- `docs/` — API, architecture, operational, and handoff documentation.
+
 ## Local development
 
 1. Copy `.env.example` to `.env` and set `JWT_SECRET` to a random value of at least 32 bytes (for example, `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`). The Compose database credentials are for local development only.
@@ -15,14 +24,15 @@ DeployHub is a React dashboard and Express API for connecting GitHub projects, t
    directory. API startup does not create or change schema:
 
    ```bash
-   docker compose up -d db
-   node server/migrate.js
+   docker compose -f docker/compose.yaml up -d db
+   npm run migrate
    ```
 
    The command creates/adopts the baseline and applies all pending migrations
    (`0001`–`0007`). The state backfill stops safely if existing deployment data
    contains unknown values or inconsistent state/URL combinations; review such
-   rows before proceeding. API and worker startup require migration `0007`:
+   rows before proceeding. API and worker startup require migration `0006`;
+   apply migration `0007` before enabling registry metadata writes:
 
    ```bash
    npm run backend:up
@@ -35,7 +45,7 @@ DeployHub is a React dashboard and Express API for connecting GitHub projects, t
 3. For frontend development with hot reload, leave the API/database running, then in another terminal run:
 
    ```bash
-   npm install
+   npm ci
    npm run dev
    ```
 
@@ -43,7 +53,7 @@ DeployHub is a React dashboard and Express API for connecting GitHub projects, t
 
 ## Deploying the DeployHub app to Render
 
-The repository includes a Render Blueprint at `../render.yaml`. Push the selected branch to GitHub, then sign in to Render, choose **New → Blueprint**, connect `swati165/deployhub`, and select `swati165-deployhub-mvp`. Render will provision a Node web service and PostgreSQL database, build the Vite app, serve the frontend and API from one HTTPS origin, and generate `JWT_SECRET`. The migration runner is separate from API startup: before starting the updated API against an existing or fresh Render database, run `node server/migrate.js` once against that service's `DATABASE_URL`. The current Blueprint does not define that pre-deploy step; configure/run the migration as an explicit release operation before deploying the new API.
+The repository includes a Render Blueprint at `render.yaml`. Push the selected branch to GitHub, then sign in to Render, choose **New → Blueprint**, connect `swati165/deployhub`, and select `swati165-deployhub-mvp`. Render will provision a Node web service and PostgreSQL database, build the Vite app, serve the frontend and API from one HTTPS origin, and generate `JWT_SECRET`. The migration runner is separate from API startup: before starting the updated API against an existing or fresh Render database, run `npm run migrate` once against that service's `DATABASE_URL`. The current Blueprint does not define that pre-deploy step; configure/run the migration as an explicit release operation before deploying the new API.
 
 The current Render Blueprint does not define a worker service. Until a separate worker is deployed and pointed at the same PostgreSQL database, API-created deployment jobs will remain queued; do not use deployment requests on that hosted instance expecting them to execute.
 
@@ -61,9 +71,9 @@ The dashboard, project list, project details, deployment list/detail, and log vi
 
 Jobs use a separate PostgreSQL `deployment_jobs` table and internal states; those states are not exposed by the deployment API. The API inserts the Deployment, initial log, and one `WAITING` job in one transaction. A worker claims due work with PostgreSQL row locks, a lease, heartbeat, and fencing generation. Automatic retries are capped at three with bounded exponential backoff and jitter. A user retry creates a new Deployment/job; transient worker retries reuse the original pair. API restart does not fail active deployments; workers recover expired jobs. Configure `JOB_POLL_INTERVAL_MS`, `JOB_LEASE_MS`, `JOB_HEARTBEAT_INTERVAL_MS`, `JOB_RETRY_BASE_MS`, and `JOB_RETRY_MAX_MS` to tune worker timing.
 
-Execution, image building, registry push, Kubernetes operation, AWS/kOps integration, and arbitrary user-code execution are not enabled by default. `EXECUTION_PROVIDER=disabled` and `ISOLATED_EXECUTOR_ENABLED=false` remain the defaults; registry push also requires `REGISTRY_PUSH_ENABLED=true` and a supported trusted provider. The local Docker runtime is fail-closed unless explicitly enabled with a digest-pinned `ISOLATED_EXECUTOR_IMAGE`; its dedicated runtime image build and offline npm-cache limitations are documented in [../docs/ISOLATED_RUNTIME_IMAGE.md](../docs/ISOLATED_RUNTIME_IMAGE.md). The currently supported application build is deliberately narrow: a Node/npm project with `package.json`, npm v3 `package-lock.json`, a `build` script, no declared or locked dependencies, and a regular-file-only `dist/` containing `index.html`. Dependency-bearing applications fail with `DEPENDENCY_CACHE_UNAVAILABLE`; arbitrary npm packages are not supported by the runtime's offline cache. Customer `start` scripts and Dockerfiles are not used. The trusted supervisor builds a local OCI image from validated static output using a generated Dockerfile, a digest-pinned Node base, and a fixed non-root static server; no customer Dockerfile or additional Docker build commands are run.
+Execution, image building, registry push, Kubernetes operation, AWS/kOps integration, and arbitrary user-code execution are not enabled by default. `EXECUTION_PROVIDER=disabled` and `ISOLATED_EXECUTOR_ENABLED=false` remain the defaults; registry push also requires `REGISTRY_PUSH_ENABLED=true` and a supported trusted provider. The local Docker runtime is fail-closed unless explicitly enabled with a digest-pinned `ISOLATED_EXECUTOR_IMAGE`; its dedicated runtime image build and offline npm-cache limitations are documented in [docs/ISOLATED_RUNTIME_IMAGE.md](docs/ISOLATED_RUNTIME_IMAGE.md). The currently supported application build is deliberately narrow: a Node/npm project with `package.json`, npm v3 `package-lock.json`, a `build` script, no declared or locked dependencies, and a regular-file-only `dist/` containing `index.html`. Dependency-bearing applications fail with `DEPENDENCY_CACHE_UNAVAILABLE`; arbitrary npm packages are not supported by the runtime's offline cache. Customer `start` scripts and Dockerfiles are not used. The trusted supervisor builds a local OCI image from validated static output using a generated Dockerfile, a digest-pinned Node base, and a fixed non-root static server; no customer Dockerfile or additional Docker build commands are run.
 
-For an enabled execution, source objects are fetched by the trusted supervisor using Git without checkout or customer command execution, copied into a container tmpfs, checked out and SHA-verified there, then built with `--network=none`. The container receives no host mounts, Docker socket, or worker environment. CPU, memory, swap, PID, tmpfs workspace size, storage-layer size, time, and output limits are enforced and verified; startup fails if Docker cannot apply them. `EGRESS_PROXY` is rejected until a restrictive proxy network can be implemented. The supervisor still requires the trusted worker process to have access to the Docker CLI/daemon and Git; do not provide that access to the API or to the build container. Docker containers share a kernel and are not a substitute for a disposable VM against kernel exploits; do not enable this on a production or credential-bearing host. Configure `SOURCE_RESOLVER=github` and `GITHUB_SOURCE_TOKEN` only on the trusted worker to pin source. Registry configuration and credentials are likewise worker-only; see [../docs/REGISTRY_PUBLISHING.md](../docs/REGISTRY_PUBLISHING.md). Registry tags are deterministic convenience names, while the registry digest is the authoritative image identity. The trusted registry must enforce immutable tags; the application fails closed unless that requirement is explicitly attested in configuration. Migration `0006` adds nullable source-SHA metadata and durable `deployment_executions` correlation/recovery records; migration `0007` adds lease-fenced registry image metadata. A PostgreSQL queue is not a security boundary.
+For an enabled execution, source objects are fetched by the trusted supervisor using Git without checkout or customer command execution, copied into a container tmpfs, checked out and SHA-verified there, then built with `--network=none`. The container receives no host mounts, Docker socket, or worker environment. CPU, memory, swap, PID, tmpfs workspace size, storage-layer size, time, and output limits are enforced and verified; startup fails if Docker cannot apply them. `EGRESS_PROXY` is rejected until a restrictive proxy network can be implemented. The supervisor still requires the trusted worker process to have access to the Docker CLI/daemon and Git; do not provide that access to the API or to the build container. Docker containers share a kernel and are not a substitute for a disposable VM against kernel exploits; do not enable this on a production or credential-bearing host. Configure `SOURCE_RESOLVER=github` and `GITHUB_SOURCE_TOKEN` only on the trusted worker to pin source. Registry configuration and credentials are likewise worker-only; see [docs/REGISTRY_PUBLISHING.md](docs/REGISTRY_PUBLISHING.md). Registry tags are deterministic convenience names, while the registry digest is the authoritative image identity. The trusted registry must enforce immutable tags; the application fails closed unless that requirement is explicitly attested in configuration. Migration `0006` adds nullable source-SHA metadata and durable `deployment_executions` correlation/recovery records; migration `0007` adds lease-fenced registry image metadata. A PostgreSQL queue is not a security boundary.
 
 Private GitHub repositories, custom environment variables, automatic TLS provisioning, deployment deletion/rollback, and multi-replica scaling are not part of this MVP.
 

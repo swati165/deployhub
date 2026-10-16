@@ -1,4 +1,4 @@
-import { validateBranch, validateGitHubUrl } from '../validation.js'
+import { validateBranch, validateGitHubUrl } from '../../backend/validation.js'
 
 export const SOURCE_RESOLUTION_VERSION = 1
 export const MAX_GITHUB_RESPONSE_BYTES = 16 * 1024

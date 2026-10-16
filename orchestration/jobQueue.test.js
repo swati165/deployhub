@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import jwt from 'jsonwebtoken'
 import pg from 'pg'
-import { createApp } from './app.js'
+import { createApp } from '../backend/app.js'
 import {
   calculateRetryDelay,
   claimNextJob,
@@ -12,7 +12,7 @@ import {
   renewJobLease,
   scheduleJobRetry,
 } from './jobQueue.js'
-import { runMigrations } from './migrate.js'
+import { runMigrations } from '../database/migrate.js'
 import { DeploymentExecutionError } from './deploymentOrchestrator.js'
 import { runWorker } from './workerRuntime.js'
 

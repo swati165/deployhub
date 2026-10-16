@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import { createApp } from './app.js'
-import { assertSchemaVersion } from './migrate.js'
+import { assertSchemaVersion } from '../database/migrate.js'
 import { pool } from './db.js'
 
 const port = Number(process.env.PORT || 5000)

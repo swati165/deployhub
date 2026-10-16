@@ -366,7 +366,7 @@ test('orchestrator owns deployment state and rejects fake success before public 
   })
 
   assert.equal(result.outcome, 'failed')
-  assert.match(result.error.message, /registry publication and Kubernetes deployment are not enabled/)
+  assert.match(result.error.message, /registry publishing is not configured; no live deployment was created/)
   assert.equal(persistedMessages.some((message) => /example-token|one-time-secret/.test(message)
     || [...message].some((character) => [1, 27].includes(character.codePointAt(0)))), false)
   assert.equal(persistedMessages.some((message) => message.includes('secret=[REDACTED]')), true)

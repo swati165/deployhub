@@ -41,7 +41,7 @@ Set `DOCKER_SOCKET_PATH` to the host socket path and `DOCKER_SOCKET_GID` to its
 numeric group ID, then start the stack with both Compose files:
 
 ```sh
-docker compose -f compose.yaml -f compose.worker-docker.yaml up --build -d db api worker
+docker compose -f docker/compose.yaml -f docker/compose.worker-docker.yaml up --build -d db api worker
 ```
 
 The socket
@@ -102,7 +102,7 @@ registry.
 Run the real Docker/registry validation only on a trusted local Docker host:
 
 ```sh
-RUN_LOCAL_REGISTRY_INTEGRATION=true node --test server/executors/localRegistry.integration.test.js
+RUN_LOCAL_REGISTRY_INTEGRATION=true node --test orchestration/executors/localRegistry.integration.test.js
 ```
 
 The test starts its own uniquely named Compose project, builds only a

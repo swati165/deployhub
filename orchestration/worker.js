@@ -1,8 +1,8 @@
 import 'dotenv/config'
 import { pathToFileURL } from 'node:url'
 import path from 'node:path'
-import { assertSchemaVersion } from './migrate.js'
-import { pool } from './db.js'
+import { assertSchemaVersion } from '../database/migrate.js'
+import { pool } from '../backend/db.js'
 import { runWorker } from './workerRuntime.js'
 
 const isMain = process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url

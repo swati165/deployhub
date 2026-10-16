@@ -1,14 +1,14 @@
 # Isolated runtime image
 
 The isolated Docker supervisor uses a dedicated image that is separate from
-`Dockerfile.api`. Build it from the `server/executors/runtime-image` directory;
+`docker/Dockerfile.api`. Build it from the `orchestration/executors/runtime-image` directory;
 the build context contains no DeployHub application or worker source:
 
 ```powershell
 docker build --platform linux/amd64 `
-  --file server/executors/runtime-image/Dockerfile `
+  --file orchestration/executors/runtime-image/Dockerfile `
   --tag deployhub/isolated-node:dev `
-  server/executors/runtime-image
+  orchestration/executors/runtime-image
 ```
 
 The Dockerfile pins the official Node image's **linux/amd64 manifest**:

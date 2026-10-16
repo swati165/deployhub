@@ -1,13 +1,13 @@
 # DeployHub project handoff
 
-**Status date:** 2026-10-05  
+**Status date:** 2026-10-16
 **Repository:** `swati165/deployhub` (`https://github.com/swati165/deployhub.git`)  
-**Current worktree branch:** `swati165-deployhub-mvp`  
-**Application directory:** `deployflow-frontend-main/`
+**Current worktree branch:** `main`
+**Application directory:** repository root
 
-This document records the observed repository/worktree state and recent local
-validation. There is substantial uncommitted work in this checkout; a fresh
-clone will not automatically contain those changes.
+This document records the repository layout, runtime boundaries, and the
+historical validation results below. The root npm package drives frontend,
+backend, orchestration, and database tasks.
 
 ## 1. Purpose and architecture
 
@@ -29,12 +29,10 @@ success or a live URL.
 ## 2. Repository and branch
 
 - Git remote: `https://github.com/swati165/deployhub.git`
-- Current local branch: `swati165-deployhub-mvp`
-- Git worktree root: the repository root; frontend/backend application files
-  are under `deployflow-frontend-main/`.
-- Current worktree includes many modified and untracked files (listed below).
-  Do not replace them with a clean checkout or assume they are already on the
-  remote branch.
+- Current local branch: `main`
+- Git worktree root: repository root.
+- The application is organized into `frontend/`, `backend/`, `database/`,
+  `orchestration/`, and `docker/`; project documentation is in `docs/`.
 
 ## 3. Phase 4A — durable jobs and trusted orchestration
 
@@ -65,7 +63,7 @@ disabled by default.**
   restrictions. It uses `--network=none`, a read-only root, non-root UID
   `1000:1000`, dropped capabilities, no-new-privileges, tmpfs workspaces, and
   no host binds or Docker socket in the customer container.
-- The dedicated runtime image is separate from `Dockerfile.api`. Its documented
+- The dedicated runtime image is separate from `docker/Dockerfile.api`. Its documented
   pinned Node base is
   `docker.io/library/node@sha256:2c752226d477b4a886378baa95b9af252be59301b725fdb0b7e15208131505a8`.
   The prior local integration validation used
@@ -103,19 +101,19 @@ not by itself a deployment.
 
 ## 6. Local Docker/Compose setup
 
-The Compose file is `deployflow-frontend-main/compose.yaml`:
+The Compose file is `docker/compose.yaml`:
 
 - `db`: PostgreSQL `16-alpine`, named volume `deployhub-postgres`, port bound
   to `127.0.0.1:5432`.
-- `api`: built from `Dockerfile.api`, port bound to `127.0.0.1:5000`.
+- `api`: built from `docker/Dockerfile.api`, port bound to `127.0.0.1:5000`.
 - `worker`: separate Node process using the API image and the same database.
 - `caddy`: optional HTTPS reverse proxy for the app/VM setup.
 
-Useful commands from `deployflow-frontend-main/`:
+Useful commands from the repository root:
 
 ```bash
-docker compose up -d db
-node server/migrate.js
+docker compose -f docker/compose.yaml up -d db
+npm run migrate
 npm run backend:up
 npm run backend:down
 npm run app:up
@@ -124,8 +122,8 @@ npm run app:up
 `backend:up` starts `db`, `api`, and `worker`; `app:up` also starts Caddy.
 Migration execution is explicit; API startup does not apply migrations. The
 worker image/Compose definition currently has no Docker socket mount, and
-`Dockerfile.api` does not install the Docker CLI. Thus the Compose worker is not
-ready to run the isolated Docker executor merely by changing its enable flag.
+`docker/Dockerfile.api` does not install the Docker CLI. Thus the Compose worker
+is not ready to run the isolated Docker executor merely by changing its enable flag.
 Do not add daemon access to customer containers to bridge that gap.
 
 ## 7. Local URLs
@@ -136,7 +134,7 @@ Do not add daemon access to customer containers to bridge that gap.
 - Registration route: `POST /api/auth/register` (there is no `/api/register`
   route in the current API).
 
-The API CORS implementation is in `server/app.js`; `server/index.js` reads
+The API CORS implementation is in `backend/app.js`; `backend/index.js` reads
 `FRONTEND_ORIGIN`. Compose now configures the API with the exact local origin
 `http://localhost:5173` (no wildcard). The API container was recreated and
 verified healthy after that change. Preflight and POST probes from this origin
@@ -144,8 +142,8 @@ returned `Access-Control-Allow-Origin: http://localhost:5173`.
 
 ## 8. Database and worker setup
 
-PostgreSQL is required. Apply migrations from `deployflow-frontend-main/` with
-`node server/migrate.js` before starting API/worker. The migration runner
+PostgreSQL is required. Apply migrations from the repository root with
+`npm run migrate` before starting API/worker. The migration runner
 checksums and serializes migrations. The current migration files are
 `0001_baseline.sql` through `0007_registry_images.sql`; `0001`–`0005` are
 immutable. API and worker source currently require schema version `0006` at
@@ -208,80 +206,51 @@ control.
 
 ## 11. Current validation and known issues
 
-Validation was run from `deployflow-frontend-main/` on 2026-10-05:
+Validation was run from the former nested application directory on 2026-10-05,
+before the project was moved to its current root-level layout:
 
 | Command | Result |
 |---|---|
-| `npm run test` | **Not fully passing:** 101 passed, 1 failed, 2 skipped. The failing assertion is `server/executionProvider.test.js` expecting the old registry/Kubernetes-disabled message; the orchestrator currently reports that registry publishing is not configured. The skipped tests require PostgreSQL. |
-| `npm run lint` | Exit 0; two warnings remain for unused `Bell` and `Key` imports in `src/pages/Settings.jsx`. |
-| `npm run build` | Passed. |
-| Focused executor tests | The direct command including registry provider tests was **not passing:** 44 passed, 10 failed. Failures include `DockerRegistryProvider` constructor errors reading `this.#config.registry` before `this.#config` is assigned. These need fixing before Phase 4D can be considered validated. |
-| Phase 4B/4C Docker integration | Previously passed with the locally available pinned runtime image and synthetic fixture; no external registry was involved. |
-| `git diff --check` | Passed for the previous Compose CORS-only edit; rerun at the end of future changes. |
+| `npm test` | Passed: 205 tests passed and 4 were skipped. The skips are gated PostgreSQL or Docker integration tests requiring `MIGRATION_TEST_ADMIN_URL`, a preloaded isolated-runtime image, or `RUN_LOCAL_REGISTRY_INTEGRATION=true`. |
+| `npm run lint` | Exit 0; two existing warnings remain for unused `Bell` and `Key` imports in `frontend/src/pages/Settings.jsx`. |
+| `npm run build` | Passed; Vite writes the production app to the root `dist/` directory served by the API. |
+| `docker compose -f docker/compose.yaml config --quiet` | Passed when supplied a temporary placeholder for the required `JWT_SECRET`; no secret value was printed. |
+| `git diff --check` | Passed after the restructuring edits. |
+| `npm ci` | Installed successfully; npm reported two high-severity audit findings. No dependency upgrades were attempted as part of the path restructuring. |
 
-No external registry push or Kubernetes deployment was performed for this
-handoff. The test results above are not a claim that current Phase 4D code is
-ready to enable.
+No external registry push, live PostgreSQL migration test, isolated-runtime
+Docker integration, or Kubernetes deployment was performed. Registry and
+execution features remain disabled by default.
 
-## 12. Current uncommitted work
+## 12. Current repository organization
 
-The full worktree has uncommitted changes. Preserve them all. Current Git
-status includes:
+No tracked application files remain under the former `deployflow-frontend-main/`
+path. The single npm package and lockfile now live at the repository root. Preserve
+the established logical boundaries when changing the project:
 
-- Modified under `deployflow-frontend-main/`: `.env.example`, `README.md`,
-  `compose.yaml`, `package.json`; backend `server/app.js`, `app.test.js`,
-  `db.js`, `index.js`, `pipeline.js`, `pipeline.test.js`; UI components
-  `DeploymentRow.jsx`, `DeploymentTimeline.jsx`, `ProjectCard.jsx`; pages
-  `DeploymentDetails.jsx`, `ProjectDetails.jsx`, `deployments.jsx`.
-- Untracked root docs: `docs/API_CONTRACT.md`, `docs/ARCHITECTURE.md`, and this
-  handoff document.
-- Untracked under `deployflow-frontend-main/docs/`:
-  `ISOLATED_RUNTIME_IMAGE.md`, `REGISTRY_PUBLISHING.md`.
-- Untracked backend implementation/tests: `server/deploymentOrchestrator.js`,
-  `deploymentOrchestrator.sourceResolver.test.js`, `deploymentStates.js`,
-  `deploymentStates.test.js`, `executionProvider.test.js`,
-  `executionReconciliation.js`, `executionReconciliation.test.js`,
-  `executorExecutionStore.js`, `executorExecutionStore.test.js`,
-  `isolatedVmExecutionProvider.test.js`, `jobQueue.js`, `jobQueue.test.js`,
-  `migrate.js`, `migrate.test.js`, `registryOrchestration.test.js`,
-  `sourceResolver.test.js`, `worker.js`, and `workerRuntime.js`.
-- Untracked `deployflow-frontend-main/server/executors/`: `DockerCliRuntime.js`,
-  `DockerRegistryProvider.js`, `ExecutionProvider.js`,
-  `FakeExecutionProvider.js`, `FakeRegistryProvider.js`, `FakeSupervisor.js`,
-  `GitSourceFetcher.js`, `isolatedRuntime.integration.test.js`,
-  `IsolatedVmExecutionProvider.js`, `IsolatedVmSupervisor.js`,
-  `IsolatedVmSupervisor.test.js`, `RegistryProvider.js`,
-  `RegistryProvider.test.js`, `SourceResolver.js`,
-  `staticAppServer.mjs`, `StaticNodeApplicationBuilder.js`,
-  `StaticNodeApplicationBuilder.test.js`, `boundedCommand.js`, and
-  `runtime-image/`.
-- Untracked migration files under `deployflow-frontend-main/server/migrations/`:
-  `0001_baseline.sql` through `0007_registry_images.sql`.
-- Untracked frontend state helper: `deployflow-frontend-main/src/utils/deploymentStates.js`.
-
-There are also untracked root-level docs as listed above. Do not stage, discard,
-or rewrite any of these files as part of unrelated work.
+- `frontend/` contains the React/Vite application.
+- `backend/` contains the Express API, HTTP tests, and database connection.
+- `orchestration/` contains the durable job queue, worker, deployment state
+  machine, providers, and orchestration tests.
+- `database/` contains the schema reference, immutable/additive migrations,
+  migration runner, and migration tests.
+- `docker/` contains the application Dockerfile, Compose configurations, and
+  Caddy configuration. The root `.dockerignore` applies to the root build
+  context.
+- `docs/` contains the API contract, architecture, handoff, and runtime notes.
 
 ## 13–15. Current phase, next objective, and limitations
 
-**Current phase: Phase 4D — registry integration, in progress and not
-validated.**
+**Current phase: Phase 4D — registry integration.** Publishing remains
+disabled by default. Keep future work within the existing trusted-worker and
+lease-fencing boundaries; do not push to an external registry by default.
 
-**Exact next objective:** finish the registry integration for the Phase 4C
-local OCI image. Resolve the focused provider constructor failures and the
-remaining existing-suite assertion mismatch, then verify the provider
-boundary, trusted-only authentication, allowlisted destination, deterministic
-tag, digest retrieval, lease-fenced persistence/retries, and secret-free
-logging. Run the full tests, lint, build, and `git diff --check`. If a local
-registry is used, make its configuration explicit and test it safely; do not
-push to an external registry by default.
-
-Current limitations include: no real registry integration has been validated;
-no registry credentials are configured here for a real push; the current app
+Current limitations include: no real registry push has been validated; no
+registry credentials are configured here for a real push; the current app
 runtime supports only dependency-free static Node/npm projects; there is no
 Kubernetes/kOps, Service/Ingress, live URL, or AWS deployment; the Compose
-worker image does not include Docker CLI/daemon wiring; and the latest full
-test run has one failure and two PostgreSQL-dependent skips.
+worker image does not include Docker CLI/daemon wiring; and the database and
+Docker integration tests require explicitly enabled local infrastructure.
 
 Phase 4E should begin only after Phase 4D is complete and reviewed. Its scope
 would be Kubernetes/kOps deployment by immutable registry digest, with
@@ -291,26 +260,22 @@ Phase 4D.
 
 ## 16. Important files and directories
 
-- `deployflow-frontend-main/src/` — React/Vite UI.
-- `deployflow-frontend-main/server/app.js` — Express routes, auth middleware,
-  CORS, and API response shaping.
-- `deployflow-frontend-main/server/jobQueue.js`,
-  `workerRuntime.js`, `worker.js` — durable work and worker process.
-- `deployflow-frontend-main/server/deploymentOrchestrator.js`,
-  `deploymentStates.js` — trusted deployment lifecycle.
-- `deployflow-frontend-main/server/executors/` — provider contracts,
-  source resolver, isolated Docker runtime/supervisor, static image builder,
-  and Phase 4D registry provider work.
-- `deployflow-frontend-main/server/executorExecutionStore.js` —
-  lease-fenced execution and registry metadata persistence.
-- `deployflow-frontend-main/server/migrations/` — additive PostgreSQL
-  migrations; never edit immutable migrations `0001`–`0005`.
-- `deployflow-frontend-main/compose.yaml`,
-  `Dockerfile.api`, `.env.example` — local services and configuration examples.
-- `docs/ISOLATED_RUNTIME_IMAGE.md` and
-  `REGISTRY_PUBLISHING.md` — runtime image and current registry design notes.
-- `docs/ARCHITECTURE.md`, `docs/API_CONTRACT.md` — repository-level architecture
-  and API notes; both are currently untracked worktree files.
+- `frontend/src/` — React/Vite UI.
+- `backend/app.js`, `index.js`, `db.js` — Express routes and API process.
+- `orchestration/jobQueue.js`, `workerRuntime.js`, `worker.js` — durable work
+  and worker process.
+- `orchestration/deploymentOrchestrator.js`, `deploymentStates.js` — trusted
+  deployment lifecycle.
+- `orchestration/executors/` — provider contracts, source resolver, isolated
+  Docker runtime/supervisor, static image builder, and registry provider.
+- `orchestration/executorExecutionStore.js` — lease-fenced execution and
+  registry metadata persistence.
+- `database/migrations/` — additive PostgreSQL migrations; never edit
+  immutable migrations `0001`–`0005`.
+- `docker/compose.yaml`, `docker/Dockerfile.api`, root `.env.example` — local
+  services and configuration examples.
+- `docs/ISOLATED_RUNTIME_IMAGE.md`, `docs/REGISTRY_PUBLISHING.md`,
+  `docs/ARCHITECTURE.md`, and `docs/API_CONTRACT.md` — design and API notes.
 
 ## 17. Rules for future Copilot agents
 
@@ -332,8 +297,7 @@ cd deployhub
 ```
 
 Then inspect `git branch -a` and check out the intended branch if it is
-available. The current worktree branch is `swati165-deployhub-mvp`, but the
-current changes (including this handoff) are uncommitted; a clone will not
-contain them unless that work is separately transferred or published. Do not
-assume that the local runtime image, Docker state, `.env`, PostgreSQL data, or
+available. The current local worktree branch is `main`; its restructuring and
+documentation commits are local until explicitly published. Do not assume
+that the local runtime image, Docker state, `.env`, PostgreSQL data, or
 registry credentials exist on the other machine.

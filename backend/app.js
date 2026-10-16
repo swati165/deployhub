@@ -6,8 +6,8 @@ import { fileURLToPath } from 'node:url'
 import { rateLimit } from 'express-rate-limit'
 import helmet from 'helmet'
 import jwt from 'jsonwebtoken'
-import { normalizeDeploymentStage, normalizeDeploymentStatus } from './deploymentStates.js'
-import { enqueueDeployment } from './jobQueue.js'
+import { normalizeDeploymentStage, normalizeDeploymentStatus } from '../orchestration/deploymentStates.js'
+import { enqueueDeployment } from '../orchestration/jobQueue.js'
 import { validateBranch, validateGitHubUrl, ValidationError } from './validation.js'
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/

@@ -1,5 +1,5 @@
 import { failCurrentDeployment, transitionDeployment } from './deploymentStates.js'
-import { validateGitHubUrl } from './validation.js'
+import { validateGitHubUrl } from '../backend/validation.js'
 import {
   EXECUTION_INPUT_VERSION,
   ExecutionProviderError,

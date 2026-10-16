@@ -18,8 +18,8 @@ services:
 
   api:
     build:
-      context: .
-      dockerfile: Dockerfile.api
+      context: ..
+      dockerfile: docker/Dockerfile.api
     environment:
       DATABASE_URL: "postgresql://${DEPLOYHUB_DB_USER:-deployhub}:${DEPLOYHUB_DB_PASSWORD:-local_dev_only}@db:5432/${DEPLOYHUB_DB_NAME:-deployhub}"
       DATABASE_SSL: "false"
@@ -45,9 +45,9 @@ services:
 
   worker:
     build:
-      context: .
-      dockerfile: Dockerfile.api
-    command: ["node", "server/worker.js"]
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    command: ["node", "orchestration/worker.js"]
     environment:
       DATABASE_URL: "postgresql://${DEPLOYHUB_DB_USER:-deployhub}:${DEPLOYHUB_DB_PASSWORD:-local_dev_only}@db:5432/${DEPLOYHUB_DB_NAME:-deployhub}"
       DATABASE_SSL: "false"
