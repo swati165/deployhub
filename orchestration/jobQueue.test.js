@@ -9,6 +9,7 @@ import {
   claimNextJob,
   enqueueDeployment,
   listOrphanedActiveDeployments,
+  markJobRunning,
   renewJobLease,
   scheduleJobRetry,
 } from './jobQueue.js'
@@ -273,6 +274,62 @@ test('durable deployment job integration behavior', { skip: !adminUrl }, async (
       assert.equal(Number(second.lease_generation), Number(first.lease_generation) + 1)
       assert.equal(await renewJobLease(pool, first, { leaseMs: 1000 }), false)
       assert.equal(await renewJobLease(pool, second, { leaseMs: 1000 }), true)
+    })
+  })
+
+  await t.test('worker finalizes an expired final-attempt lease as a failed deployment', async () => {
+    await withDatabase(async ({ pool }) => {
+      const { user, projectId } = await createProject(pool)
+      const deploymentId = await createAttempt(pool, { userId: user.id, projectId })
+      await pool.query(
+        'UPDATE deployment_jobs SET attempts = 2 WHERE deployment_id = $1',
+        [deploymentId],
+      )
+      const abandonedClaim = await claimNextJob(pool, 'crashed-worker', { leaseMs: 50 })
+      assert.equal(abandonedClaim.attempts, 3)
+      assert.equal(await markJobRunning(pool, abandonedClaim), true)
+      await new Promise((resolve) => setTimeout(resolve, 75))
+
+      const controller = new AbortController()
+      let orchestratorCalls = 0
+      const worker = runWorker(pool, {
+        workerId: 'lease-recovery-worker',
+        config: { pollIntervalMs: 5, leaseMs: 1000, heartbeatMs: 100, retryBaseMs: 100, retryMaxMs: 1000 },
+        signal: controller.signal,
+        orchestrator: async () => {
+          orchestratorCalls += 1
+          return { outcome: 'failed', error: new Error('The expired job should not execute again.') }
+        },
+      })
+
+      try {
+        let result
+        const deadline = Date.now() + 2000
+        do {
+          result = await pool.query(
+            `SELECT deployments.status, deployments.stage, deployments.error, deployments.live_url,
+                    jobs.state, jobs.attempts, jobs.completed_at
+             FROM deployments
+             JOIN deployment_jobs AS jobs ON jobs.deployment_id = deployments.id
+             WHERE deployments.id = $1`,
+            [deploymentId],
+          )
+          if (result.rows[0]?.status === 'FAILED') break
+          await new Promise((resolve) => setTimeout(resolve, 10))
+        } while (Date.now() < deadline)
+
+        assert.equal(result.rows[0].status, 'FAILED')
+        assert.equal(result.rows[0].stage, 'QUEUED')
+        assert.match(result.rows[0].error, /Worker lease expired after the maximum number of attempts/)
+        assert.equal(result.rows[0].live_url, null)
+        assert.equal(result.rows[0].state, 'DEAD_LETTER')
+        assert.equal(result.rows[0].attempts, 3)
+        assert.ok(result.rows[0].completed_at)
+        assert.equal(orchestratorCalls, 0)
+      } finally {
+        controller.abort()
+        await worker
+      }
     })
   })
 
