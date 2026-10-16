@@ -307,7 +307,7 @@ Phase 4D.
   migrations; never edit immutable migrations `0001`–`0005`.
 - `deployflow-frontend-main/compose.yaml`,
   `Dockerfile.api`, `.env.example` — local services and configuration examples.
-- `deployflow-frontend-main/docs/ISOLATED_RUNTIME_IMAGE.md` and
+- `docs/ISOLATED_RUNTIME_IMAGE.md` and
   `REGISTRY_PUBLISHING.md` — runtime image and current registry design notes.
 - `docs/ARCHITECTURE.md`, `docs/API_CONTRACT.md` — repository-level architecture
   and API notes; both are currently untracked worktree files.
