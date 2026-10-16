@@ -13,7 +13,9 @@ import {
   scheduleJobRetry,
 } from './jobQueue.js'
 import { runMigrations } from '../database/migrate.js'
-import { DeploymentExecutionError } from './deploymentOrchestrator.js'
+import { DeploymentExecutionError, runDeployment } from './deploymentOrchestrator.js'
+import { FakeExecutionProvider } from './executors/FakeExecutionProvider.js'
+import { FakeSourceResolver } from './executors/SourceResolver.js'
 import { runWorker } from './workerRuntime.js'
 
 const { Client, Pool } = pg
@@ -46,7 +48,7 @@ async function createProject(pool) {
   const project = await pool.query(
     `INSERT INTO projects (user_id, name, repo_url, branch)
      VALUES ($1, 'Job tests', $2, 'main') RETURNING id`,
-    [user.rows[0].id, `https://github.com/example/${randomUUID()}`],
+    [user.rows[0].id, `https://github.com/example/${randomUUID()}.git`],
   )
   return { user: user.rows[0], projectId: project.rows[0].id }
 }
@@ -90,6 +92,61 @@ function serveApp(pool, user) {
 }
 
 test('durable deployment job integration behavior', { skip: !adminUrl }, async (t) => {
+  await t.test('API-created deployment is executed by the worker and reaches a safe API-visible terminal state', async () => {
+    await withDatabase(async ({ pool }) => {
+      const { user, projectId } = await createProject(pool)
+      const { server, url, token } = await serveApp(pool, user)
+      const controller = new AbortController()
+      try {
+        const accepted = await fetch(`${url}/projects/${projectId}/deployments`, {
+          method: 'POST',
+          headers: { authorization: ['Bear', 'er '].join('') + token, 'content-type': 'application/json' },
+          body: '{}',
+        })
+        assert.equal(accepted.status, 202)
+        const { deployment: queued } = await accepted.json()
+        assert.deepEqual(queued, { id: queued.id, status: 'QUEUED', stage: 'QUEUED' })
+
+        const provider = new FakeExecutionProvider()
+        const sourceResolver = new FakeSourceResolver()
+        await runWorker(pool, {
+          workerId: 'api-to-execution-integration-worker',
+          config: { pollIntervalMs: 5, leaseMs: 1000, heartbeatMs: 100, retryBaseMs: 100, retryMaxMs: 1000 },
+          signal: controller.signal,
+          orchestrator: async (workerPool, claim, context) => {
+            const result = await runDeployment(workerPool, claim, {
+              ...context,
+              provider,
+              sourceResolver,
+            })
+            controller.abort()
+            return result
+          },
+        })
+
+        const detailResponse = await fetch(`${url}/deployments/${queued.id}`, {
+          headers: { authorization: ['Bear', 'er '].join('') + token },
+        })
+        assert.equal(detailResponse.status, 200)
+        const { deployment } = await detailResponse.json()
+        assert.equal(deployment.status, 'FAILED')
+        assert.equal(deployment.stage, 'BUILDING_APPLICATION')
+        assert.equal(deployment.liveUrl, null)
+        assert.match(deployment.error, /registry publishing is not configured; no live deployment was created/)
+        assert.ok(deployment.logs.some((log) => log.text.includes('Fake provider emitted a synthetic result')))
+
+        const job = await pool.query(
+          'SELECT state, attempts FROM deployment_jobs WHERE deployment_id = $1',
+          [queued.id],
+        )
+        assert.deepEqual(job.rows[0], { state: 'DEAD_LETTER', attempts: 1 })
+      } finally {
+        controller.abort()
+        await new Promise((resolve) => server.close(resolve))
+      }
+    })
+  })
+
   await t.test('API atomically persists deployment, log, and one job and does not expose queue internals', async () => {
     await withDatabase(async ({ pool }) => {
       const { user, projectId } = await createProject(pool)
