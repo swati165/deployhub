@@ -361,6 +361,61 @@ test('durable deployment job integration behavior', { skip: !adminUrl }, async (
     })
   })
 
+  await t.test('worker retries the same job after a transient failure and records the next terminal outcome', async () => {
+    await withDatabase(async ({ pool }) => {
+      const { user, projectId } = await createProject(pool)
+      const deploymentId = await createAttempt(pool, { userId: user.id, projectId })
+      const controller = new AbortController()
+      const executions = []
+      await runWorker(pool, {
+        workerId: 'retry-recovery-worker',
+        config: { pollIntervalMs: 5, leaseMs: 1000, heartbeatMs: 100, retryBaseMs: 1, retryMaxMs: 1 },
+        signal: controller.signal,
+        orchestrator: async (_workerPool, claim) => {
+          executions.push({
+            jobId: claim.id,
+            deploymentId: claim.deployment_id,
+            attempt: claim.attempts,
+          })
+          if (claim.attempts === 1) {
+            return {
+              outcome: 'failed',
+              error: Object.assign(new Error('Temporary registry outage'), { retryable: true }),
+            }
+          }
+          controller.abort()
+          return {
+            outcome: 'failed',
+            error: new DeploymentExecutionError('Unsupported repository configuration'),
+          }
+        },
+      })
+
+      assert.equal(executions.length, 2)
+      assert.equal(executions[0].attempt, 1)
+      assert.equal(executions[1].attempt, 2)
+      assert.equal(executions[1].jobId, executions[0].jobId)
+      assert.equal(executions[0].deploymentId, deploymentId)
+      assert.equal(executions[1].deploymentId, deploymentId)
+
+      const result = await pool.query(
+        `SELECT deployments.status, deployments.stage, deployments.error, deployments.live_url,
+                jobs.id, jobs.state, jobs.attempts
+         FROM deployments
+         JOIN deployment_jobs AS jobs ON jobs.deployment_id = deployments.id
+         WHERE deployments.id = $1`,
+        [deploymentId],
+      )
+      assert.equal(result.rows[0].status, 'FAILED')
+      assert.equal(result.rows[0].stage, 'QUEUED')
+      assert.match(result.rows[0].error, /Unsupported repository configuration/)
+      assert.equal(result.rows[0].live_url, null)
+      assert.equal(result.rows[0].id, executions[0].jobId)
+      assert.equal(result.rows[0].state, 'DEAD_LETTER')
+      assert.equal(result.rows[0].attempts, 2)
+    })
+  })
+
   await t.test('three attempts are bounded and exhausted work is dead-lettered', async () => {
     await withDatabase(async ({ pool }) => {
       const { user, projectId } = await createProject(pool)
