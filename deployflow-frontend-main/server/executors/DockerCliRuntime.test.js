@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import path from 'node:path'
 import { DockerCliRuntime } from './DockerCliRuntime.js'
 
 const reference = 'deployhub-app:0123456789abcdef01234567'
@@ -38,6 +39,41 @@ test('exports only the locally verified application image by immutable ID with b
   assert.equal(calls[1].options.timeoutMs, 30_000)
   assert.equal(calls[1].options.maxOutputBytes, 512 * 1024 * 1024)
   assert.equal(calls[1].options.signal, signal)
+})
+
+test('builds application images without BuildKit provenance indexes', async () => {
+  const contextDirectory = path.resolve('build-context')
+  const calls = []
+  const runtime = new DockerCliRuntime({
+    run: async (command, args, options) => {
+      calls.push({ command, args, options })
+      if (args[0] === 'build') return { code: 0, stdout: '', stderr: '' }
+      return {
+        code: 0,
+        stdout: JSON.stringify([{ Id: digest, Config: {} }]),
+        stderr: '',
+      }
+    },
+  })
+
+  const result = await runtime.buildApplicationImage({
+    contextDirectory,
+    reference,
+    policy: { logBytes: 4096, timeoutMs: 60_000 },
+    timeoutMs: 60_000,
+  })
+
+  assert.deepEqual(result, { imageId: digest, config: {} })
+  assert.deepEqual(calls[0].args, [
+    'build',
+    '--network=none',
+    '--pull=false',
+    '--provenance=false',
+    '--quiet',
+    '--tag', reference,
+    contextDirectory,
+  ])
+  assert.deepEqual(calls[1].args, ['image', 'inspect', reference])
 })
 
 test('refuses to export an image when its local identity does not match', async () => {

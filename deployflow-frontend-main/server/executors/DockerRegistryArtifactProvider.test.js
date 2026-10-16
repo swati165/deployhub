@@ -20,9 +20,29 @@ const request = {
 const archive = Buffer.from('trusted image archive')
 const registryDigest = `sha256:${'c'.repeat(64)}`
 
+const missingManifestRegistryFetch = async (input) => {
+  const url = new URL(input)
+  if (url.pathname.endsWith('/tags/list')) {
+    return Response.json({ name: 'deployhub/apps', tags: [] })
+  }
+  return Response.json({
+    errors: [{
+      code: 'MANIFEST_UNKNOWN',
+      message: 'manifest unknown',
+      detail: { Tag: url.pathname.split('/').at(-1) },
+    }],
+  }, { status: 404 })
+}
+
 function createBoundary({ exported = {}, run = async (_command, args) => {
-  if (args.includes('manifest')) return { code: 1, stdout: '', stderr: 'manifest unknown' }
-  if (args.includes('inspect')) return { code: 0, stdout: `${request.localImage.digest}\n`, stderr: '' }
+  if (args.includes('--raw')) return { code: 1, stdout: '', stderr: 'manifest unknown' }
+  if (args.includes('image') && args.includes('inspect')
+    && args.includes('{{json .RepoDigests}}')) {
+    return { code: 0, stdout: `${request.localImage.digest} []\n`, stderr: '' }
+  }
+  if (args.includes('image') && args.includes('inspect')) {
+    return { code: 0, stdout: `${request.localImage.digest}\n`, stderr: '' }
+  }
   if (args.includes('push')) return { code: 0, stdout: `digest: ${registryDigest}\n`, stderr: '' }
   return { code: 0, stdout: '', stderr: '' }
 } } = {}) {
@@ -48,6 +68,7 @@ function createBoundary({ exported = {}, run = async (_command, args) => {
       password: 'must-not-leak',
       immutableTags: true,
     },
+    registryFetch: missingManifestRegistryFetch,
     run: async (command, args, options) => {
       calls.push({ source: 'registry', command, args, options })
       return run(command, args, options)
@@ -79,6 +100,8 @@ test('exports, validates, loads, and publishes a correlated immutable applicatio
     && args.includes('tag') && args.includes(request.localImage.reference))
   assert.ok(tag)
   assert.ok(calls.some(({ source, args }) => source === 'registry' && args.includes('push')))
+  assert.ok(calls.some(({ source, args }) =>
+    source === 'registry' && args.includes('imagetools') && args.includes('--raw')))
   assert.ok(leaseChecks >= 4)
   assert.equal(result.commitSha, request.commitSha)
   assert.equal(result.executionId, request.executionId)

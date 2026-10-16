@@ -34,8 +34,9 @@ successful push until Kubernetes deployment is implemented.
 
 The base Compose configuration does not give the worker Docker access. For a
 trusted local development machine only, the optional
-`compose.worker-docker.yaml` override installs Docker CLI in the worker image
-and mounts the configured host Docker socket into the worker service only.
+`compose.worker-docker.yaml` override installs Docker CLI and Buildx in the
+worker image and mounts the configured host Docker socket into the worker
+service only.
 Set `DOCKER_SOCKET_PATH` to the host socket path and `DOCKER_SOCKET_GID` to its
 numeric group ID, then start the stack with both Compose files:
 
@@ -61,8 +62,12 @@ stored or logged.
 
 Each tag is `dh-` followed by the SHA-256 hash of deployment ID, execution ID,
 and immutable source commit SHA. The tag is only an idempotency/convenience
-reference. A pre-existing remote tag is reused only if its manifest config
-digest matches the local image ID; a conflicting image fails with
+reference. A pre-existing remote tag is reused only if it is a supported
+single-image Docker/OCI manifest and either its config digest matches the local
+image ID or its manifest digest matches the ID attested in the local Docker
+image's `RepoDigests`. OCI indexes and ambiguous/malformed manifests fail
+closed; the generated application-image build disables BuildKit provenance so
+it publishes a single-image manifest. A conflicting identity fails with
 `DUPLICATE_EXECUTION`. The configured registry must independently enforce tag
 immutability to close the race between the preflight check and push.
 `REGISTRY_TAGS_IMMUTABLE=true` is an explicit operator attestation; DeployHub
@@ -89,7 +94,7 @@ repository.
 
 `compose.local-registry.yaml` provides an opt-in, unauthenticated OCI registry
 for local validation only. It is not included by the normal Compose stack. The
-service publishes port `5050` on loopback only, has no persistent volume, and
+service publishes port `5051` on loopback only, has no persistent volume, and
 uses `pull_policy: never`; the official `registry:2.8.3` image must already be
 available locally. Validation will not pull it from Docker Hub or any other
 registry.

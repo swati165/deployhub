@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { access } from 'node:fs/promises'
 import {
   DockerRegistryProvider,
@@ -26,6 +27,19 @@ const request = Object.freeze({
 })
 
 const digest = `sha256:${'c'.repeat(64)}`
+
+function missingManifestRegistryFetch() {
+  return async (input) => {
+    const url = new URL(input)
+    if (url.pathname.endsWith('/tags/list')) {
+      return Response.json({ name: 'team/deployhub', tags: [] })
+    }
+    const tag = url.pathname.split('/').at(-1)
+    return Response.json({
+      errors: [{ code: 'MANIFEST_UNKNOWN', message: 'manifest unknown', detail: { Tag: tag } }],
+    }, { status: 404 })
+  }
+}
 
 test('fake registry push returns immutable digest metadata correlated to deployment, execution, source, and local image', async () => {
   const provider = new FakeRegistryProvider()
@@ -90,10 +104,13 @@ test('Docker registry provider uses trusted scoped config and passes its credent
       password: secret,
       immutableTags: true,
     },
+    registryFetch: missingManifestRegistryFetch(),
     run: async (_command, args, options) => {
       calls.push({ args, options })
-      if (args.includes('manifest')) return { code: 1, stdout: '', stderr: 'manifest unknown' }
-      if (args.includes('inspect')) return { code: 0, stdout: `${request.localImage.digest}\n`, stderr: '' }
+      if (args.includes('--raw')) return { code: 1, stdout: '', stderr: 'manifest unknown' }
+      if (args.includes('image') && args.includes('inspect')) {
+        return { code: 0, stdout: `${request.localImage.digest} []\n`, stderr: '' }
+      }
       if (args.includes('push')) return { code: 0, stdout: `digest: ${digest}\n`, stderr: '' }
       return { code: 0, stdout: '', stderr: '' }
     },
@@ -117,9 +134,417 @@ test('Docker registry provider uses trusted scoped config and passes its credent
   await assert.rejects(access(configPath), { code: 'ENOENT' })
 })
 
-test('existing immutable tags are reused only when their config digest matches the local image', async (t) => {
+test('registry API confirmation distinguishes a missing manifest before permitting a push', async (t) => {
+  for (const [name, inspectionError] of [
+    ['exact missing-reference output', (target) => `ERROR: ${target}: not found`],
+    ['explicit manifest unknown', () => 'ERROR: manifest unknown'],
+  ]) {
+    await t.test(name, async () => {
+      const calls = []
+      const registryRequests = []
+      const tag = createRegistryTag(request)
+      const registryFetch = async (input) => {
+        const url = new URL(input)
+        registryRequests.push(url.pathname)
+        if (url.pathname.endsWith('/tags/list')) {
+          return Response.json({ name: 'team/deployhub', tags: [] })
+        }
+        const tag = url.pathname.split('/').at(-1)
+        return Response.json({
+          errors: [{ code: 'MANIFEST_UNKNOWN', message: 'manifest unknown', detail: { Tag: tag } }],
+        }, { status: 404 })
+      }
+      const provider = new DockerRegistryProvider({
+        config: {
+          registry: 'registry.example.test',
+          repository: 'team/deployhub',
+          username: 'trusted-publisher',
+          password: 'secret',
+          immutableTags: true,
+        },
+        registryFetch,
+        run: async (_command, args) => {
+          calls.push(args)
+          if (args.includes('--raw')) {
+            return { code: 1, stdout: '', stderr: inspectionError(args.at(-1)) }
+          }
+          if (args.includes('image') && args.includes('inspect')) {
+            return { code: 0, stdout: `${request.localImage.digest} []\n`, stderr: '' }
+          }
+          if (args.includes('push')) {
+            return { code: 0, stdout: `digest: ${digest}\n`, stderr: '' }
+          }
+          return { code: 0, stdout: '', stderr: '' }
+        },
+      })
+
+      const result = await provider.push(request)
+      assert.equal(result.registryDigest, digest)
+      assert.deepEqual(registryRequests, [
+        '/v2/team/deployhub/tags/list',
+        `/v2/team/deployhub/manifests/${tag}`,
+      ])
+      assert.equal(calls.some((args) => args.includes('push')), true)
+    })
+  }
+})
+
+test('unrelated and ambiguous Buildx inspection errors fail closed without registry probing or push', async (t) => {
+  for (const inspectionError of [
+    'ERROR: repository not found',
+    'ERROR: a not found result is ambiguous',
+    'ERROR: another-tag: not found',
+  ]) {
+    await t.test(inspectionError, async () => {
+      const calls = []
+      const provider = new DockerRegistryProvider({
+        config: {
+          registry: 'registry.example.test',
+          repository: 'team/deployhub',
+          username: 'publisher',
+          password: 'secret',
+          immutableTags: true,
+        },
+        registryFetch: async () => {
+          throw new Error('unexpected registry probe')
+        },
+        run: async (_command, args) => {
+          calls.push(args)
+          if (args.includes('--raw')) return { code: 1, stdout: '', stderr: inspectionError }
+          if (args.includes('image') && args.includes('inspect')) {
+            return { code: 0, stdout: `${request.localImage.digest} []\n`, stderr: '' }
+          }
+          return { code: 0, stdout: '', stderr: '' }
+        },
+      })
+      await assert.rejects(provider.push(request), (error) => error.code === 'REGISTRY_PUSH_FAILED')
+      assert.equal(calls.some((args) => args.includes('push')), false)
+    })
+  }
+})
+
+test('registry authentication challenge scopes credentials and bearer token to configured registry requests', async () => {
+  const fetchCalls = []
+  const authRealm = 'https://auth.registry.example.test/token'
+  const provider = new DockerRegistryProvider({
+    config: {
+      registry: 'registry.example.test',
+      repository: 'team/deployhub',
+      username: 'trusted-publisher',
+      password: 'sensitive-password',
+      immutableTags: true,
+    },
+    registryFetch: async (input, options) => {
+      const url = new URL(input)
+      fetchCalls.push({ url, options })
+      if (url.origin === new URL(authRealm).origin) {
+        assert.equal(url.searchParams.get('scope'), 'repository:team/deployhub:pull')
+        assert.equal(url.searchParams.get('service'), 'registry.example.test')
+        assert.equal(options.headers.Authorization, `Basic ${Buffer.from('trusted-publisher:sensitive-password').toString('base64')}`)
+        return Response.json({ token: 'scoped-registry-token' })
+      }
+      if (!options.headers.Authorization) {
+        return new Response('', {
+          status: 401,
+          headers: {
+            'www-authenticate': `Bearer realm="${authRealm}",service="registry.example.test",scope="repository:team/deployhub:pull,push"`,
+          },
+        })
+      }
+      assert.equal(options.headers.Authorization, 'Bearer scoped-registry-token')
+      return url.pathname.endsWith('/tags/list')
+        ? Response.json({ name: 'team/deployhub', tags: [] })
+        : Response.json({
+          errors: [{
+            code: 'MANIFEST_UNKNOWN',
+            message: 'manifest unknown',
+            detail: { Tag: url.pathname.split('/').at(-1) },
+          }],
+        }, { status: 404 })
+    },
+    run: async (_command, args) => {
+      if (args.includes('--raw')) {
+        return { code: 1, stdout: '', stderr: `ERROR: ${args.at(-1)}: not found` }
+      }
+      if (args.includes('image') && args.includes('inspect')) {
+        return { code: 0, stdout: `${request.localImage.digest} []\n`, stderr: '' }
+      }
+      if (args.includes('push')) return { code: 0, stdout: `digest: ${digest}\n`, stderr: '' }
+      return { code: 0, stdout: '', stderr: '' }
+    },
+  })
+
+  const result = await provider.push(request)
+  assert.equal(result.registryDigest, digest)
+  assert.ok(fetchCalls.every(({ options }) => options.redirect === 'manual'))
+  assert.equal(fetchCalls.some(({ url, options }) =>
+    url.origin === 'https://registry.example.test'
+    && options.headers.Authorization === 'Bearer scoped-registry-token'), true)
+  assert.equal(fetchCalls.some(({ url, options }) =>
+    url.origin !== 'https://auth.registry.example.test'
+    && options.headers.Authorization?.includes('sensitive-password')), false)
+})
+
+test('basic authentication challenge sends credentials only to the configured registry origin', async () => {
+  const fetchCalls = []
+  const provider = new DockerRegistryProvider({
+    config: {
+      registry: 'registry.example.test',
+      repository: 'team/deployhub',
+      username: 'trusted-publisher',
+      password: 'sensitive-password',
+      immutableTags: true,
+    },
+    registryFetch: async (input, options) => {
+      const url = new URL(input)
+      fetchCalls.push({ url, options })
+      if (!options.headers.Authorization) {
+        return new Response('', {
+          status: 401,
+          headers: { 'www-authenticate': 'Basic realm="registry"' },
+        })
+      }
+      assert.equal(
+        options.headers.Authorization,
+        `Basic ${Buffer.from('trusted-publisher:sensitive-password').toString('base64')}`,
+      )
+      return url.pathname.endsWith('/tags/list')
+        ? Response.json({ name: 'team/deployhub', tags: [] })
+        : Response.json({
+          errors: [{
+            code: 'MANIFEST_UNKNOWN',
+            message: 'manifest unknown',
+            detail: { Tag: url.pathname.split('/').at(-1) },
+          }],
+        }, { status: 404 })
+    },
+    run: async (_command, args) => {
+      if (args.includes('--raw')) {
+        return { code: 1, stdout: '', stderr: `ERROR: ${args.at(-1)}: not found` }
+      }
+      if (args.includes('image') && args.includes('inspect')) {
+        return { code: 0, stdout: `${request.localImage.digest} []\n`, stderr: '' }
+      }
+      if (args.includes('push')) return { code: 0, stdout: `digest: ${digest}\n`, stderr: '' }
+      return { code: 0, stdout: '', stderr: '' }
+    },
+  })
+
+  const result = await provider.push(request)
+  assert.equal(result.registryDigest, digest)
+  assert.ok(fetchCalls.every(({ url, options }) =>
+    url.origin === 'https://registry.example.test' && options.redirect === 'manual'))
+})
+
+test('registry API failures never permit a push after ambiguous Buildx inspection errors', async (t) => {
+  const cases = [
+    ['NAME_UNKNOWN repository', async (url) => url.pathname.endsWith('/tags/list')
+      ? Response.json({ errors: [{ code: 'NAME_UNKNOWN', message: 'unknown repository' }] }, { status: 404 })
+      : Response.json({ errors: [] }, { status: 404 }), 'REGISTRY_PUSH_FAILED'],
+    ['unauthorized', async () => Response.json({ errors: [] }, { status: 401 }), 'REGISTRY_AUTHENTICATION_FAILED'],
+    ['forbidden', async () => Response.json({ errors: [] }, { status: 403 }), 'REGISTRY_UNAUTHORIZED_REPOSITORY'],
+    ['unexpected status', async () => Response.json({ errors: [] }, { status: 500 }), 'REGISTRY_PUSH_FAILED'],
+    ['malformed tags JSON', async () => new Response('{', { status: 200 }), 'REGISTRY_PUSH_FAILED'],
+    ['transport error', async () => { throw new Error('simulated transport failure') }, 'REGISTRY_PUSH_FAILED'],
+    ['malformed manifest error JSON', async (url) => url.pathname.endsWith('/tags/list')
+      ? Response.json({ name: 'team/deployhub', tags: [] })
+      : new Response('{', { status: 404 }), 'REGISTRY_PUSH_FAILED'],
+    ['wrong manifest error code', async (url) => url.pathname.endsWith('/tags/list')
+      ? Response.json({ name: 'team/deployhub', tags: [] })
+      : Response.json({ errors: [{ code: 'NAME_UNKNOWN' }] }, { status: 404 }), 'REGISTRY_PUSH_FAILED'],
+  ]
+  for (const [name, registryFetch, expectedCode] of cases) {
+    await t.test(name, async () => {
+      const calls = []
+      const provider = new DockerRegistryProvider({
+        config: {
+          registry: 'registry.example.test',
+          repository: 'team/deployhub',
+          username: 'publisher',
+          password: 'secret',
+          immutableTags: true,
+        },
+        registryFetch,
+        run: async (_command, args) => {
+          calls.push(args)
+          if (args.includes('--raw')) {
+            return { code: 1, stdout: '', stderr: `ERROR: ${args.at(-1)}: not found` }
+          }
+          if (args.includes('image') && args.includes('inspect')) {
+            return { code: 0, stdout: `${request.localImage.digest} []\n`, stderr: '' }
+          }
+          return { code: 0, stdout: `digest: ${digest}\n`, stderr: '' }
+        },
+      })
+      await assert.rejects(
+        provider.push(request),
+        (error) => error.code === expectedCode,
+      )
+      assert.equal(calls.some((args) => args.includes('push')), false)
+    })
+  }
+})
+
+test('fresh repository first push treats a NAME_UNKNOWN tags list identifying the configured repository as absence', async () => {
+  const calls = []
+  const provider = new DockerRegistryProvider({
+    config: {
+      registry: 'registry.example.test',
+      repository: 'team/deployhub',
+      username: 'publisher',
+      password: 'secret',
+      immutableTags: true,
+    },
+    registryFetch: async (input) => {
+      const url = new URL(input)
+      if (url.pathname.endsWith('/tags/list')) {
+        return Response.json({
+          errors: [{
+            code: 'NAME_UNKNOWN',
+            message: 'repository name not known to registry',
+            detail: { name: 'team/deployhub' },
+          }],
+        }, { status: 404 })
+      }
+      return Response.json({
+        errors: [{ code: 'MANIFEST_UNKNOWN', message: 'manifest unknown', detail: { Tag: 'ignored' } }],
+      }, { status: 404 })
+    },
+    run: async (_command, args) => {
+      calls.push(args)
+      if (args.includes('--raw')) {
+        return { code: 1, stdout: '', stderr: `ERROR: ${args.at(-1)}: not found` }
+      }
+      if (args.includes('image') && args.includes('inspect')) {
+        return { code: 0, stdout: `${request.localImage.digest} []\n`, stderr: '' }
+      }
+      return { code: 0, stdout: `digest: ${digest}\n`, stderr: '' }
+    },
+  })
+  const result = await provider.push(request)
+  assert.equal(result.registryDigest, digest)
+  assert.equal(result.image, `registry.example.test/team/deployhub@${digest}`)
+  assert.ok(calls.some((args) => args.includes('push')), 'the first push must reach docker push')
+})
+
+test('NAME_UNKNOWN tags list responses that do not identify the configured repository stay fail-closed', async (t) => {
+  const cases = [
+    ['mismatched repository identity', {
+      errors: [{ code: 'NAME_UNKNOWN', message: 'repository name not known to registry', detail: { name: 'other/repository' } }],
+    }],
+    ['non-string repository identity', { errors: [{ code: 'NAME_UNKNOWN', detail: { name: 123 } }] }],
+    ['missing repository identity', { errors: [{ code: 'NAME_UNKNOWN', message: 'repository name not known to registry' }] }],
+    ['wrong error code', { errors: [{ code: 'MANIFEST_UNKNOWN', detail: { name: 'team/deployhub' } }] }],
+    ['empty errors array', { errors: [] }],
+  ]
+  for (const [name, body] of cases) {
+    await t.test(name, async () => {
+      const calls = []
+      const provider = new DockerRegistryProvider({
+        config: {
+          registry: 'registry.example.test',
+          repository: 'team/deployhub',
+          username: 'publisher',
+          password: 'secret',
+          immutableTags: true,
+        },
+        registryFetch: async (input) => {
+          const url = new URL(input)
+          if (url.pathname.endsWith('/tags/list')) {
+            return Response.json(body, { status: 404 })
+          }
+          return Response.json({ errors: [{ code: 'MANIFEST_UNKNOWN', detail: { Tag: 'ignored' } }] }, { status: 404 })
+        },
+        run: async (_command, args) => {
+          calls.push(args)
+          if (args.includes('--raw')) {
+            return { code: 1, stdout: '', stderr: `ERROR: ${args.at(-1)}: not found` }
+          }
+          if (args.includes('image') && args.includes('inspect')) {
+            return { code: 0, stdout: `${request.localImage.digest} []\n`, stderr: '' }
+          }
+          return { code: 0, stdout: `digest: ${digest}\n`, stderr: '' }
+        },
+      })
+      await assert.rejects(
+        provider.push(request),
+        (error) => error.code === 'REGISTRY_PUSH_FAILED',
+      )
+      assert.equal(calls.some((args) => args.includes('push')), false, 'a push must never follow an unverified tags list')
+    })
+  }
+})
+
+test('existing immutable tags are reused only when a supported image identity matches locally', async (t) => {
   for (const matches of [true, false]) {
-    await t.test(matches ? 'matching tag' : 'conflicting tag', async () => {
+    await t.test(matches ? 'matching config digest' : 'conflicting config digest', async () => {
+      const calls = []
+      const remoteManifest = JSON.stringify({
+        schemaVersion: 2,
+        mediaType: 'application/vnd.oci.image.manifest.v1+json',
+        config: {
+          mediaType: 'application/vnd.oci.image.config.v1+json',
+          digest: matches ? request.localImage.digest : `sha256:${'f'.repeat(64)}`,
+        },
+        layers: [],
+      })
+      const provider = new DockerRegistryProvider({
+        config: {
+          registry: 'registry.example.test',
+          repository: 'team/deployhub',
+          username: 'publisher',
+          password: 'secret',
+          immutableTags: true,
+        },
+        registryFetch: missingManifestRegistryFetch(),
+        run: async (_command, args) => {
+          calls.push(args)
+          if (args.includes('--raw')) {
+            return { code: 0, stdout: remoteManifest, stderr: '' }
+          }
+          if (args.includes('image') && args.includes('inspect')) {
+            return { code: 0, stdout: `${request.localImage.digest}\n`, stderr: '' }
+          }
+          return { code: 0, stdout: '', stderr: '' }
+        },
+      })
+      if (matches) {
+        const result = await provider.push(request)
+        assert.equal(
+          result.registryDigest,
+          `sha256:${createHash('sha256').update(remoteManifest).digest('hex')}`,
+        )
+      } else {
+        await assert.rejects(
+          provider.push(request),
+          (error) => error.code === 'DUPLICATE_EXECUTION',
+        )
+      }
+      assert.equal(calls.some((args) => args.includes('push')), false)
+    })
+  }
+})
+
+test('OCI manifest digest can match the local Docker image ID only when RepoDigests attests the same identity', async (t) => {
+  const remoteManifest = JSON.stringify({
+    schemaVersion: 2,
+    mediaType: 'application/vnd.oci.image.manifest.v1+json',
+    config: {
+      mediaType: 'application/vnd.oci.image.config.v1+json',
+      digest: `sha256:${'d'.repeat(64)}`,
+    },
+    layers: [],
+  })
+  const manifestDigest = `sha256:${createHash('sha256').update(remoteManifest).digest('hex')}`
+  const localRequest = {
+    ...request,
+    localImage: { ...request.localImage, digest: manifestDigest },
+  }
+  for (const repoDigests of [
+    [`deployhub-app@${manifestDigest}`],
+    [],
+  ]) {
+    await t.test(repoDigests.length ? 'matching repo digest' : 'missing repo digest fails closed', async () => {
       const calls = []
       const provider = new DockerRegistryProvider({
         config: {
@@ -131,34 +556,71 @@ test('existing immutable tags are reused only when their config digest matches t
         },
         run: async (_command, args) => {
           calls.push(args)
-          if (args.includes('inspect') && !args.includes('manifest')) {
-            return { code: 0, stdout: `${request.localImage.digest}\n`, stderr: '' }
-          }
-          if (args.includes('manifest')) {
+          if (args.includes('--raw')) return { code: 0, stdout: remoteManifest, stderr: '' }
+          if (args.includes('image') && args.includes('inspect')) {
             return {
               code: 0,
-              stdout: JSON.stringify({
-                Descriptor: { digest },
-                SchemaV2Manifest: { config: { digest: matches ? request.localImage.digest : `sha256:${'f'.repeat(64)}` } },
-              }),
+              stdout: `${manifestDigest} ${JSON.stringify(repoDigests)}\n`,
               stderr: '',
             }
           }
           return { code: 0, stdout: '', stderr: '' }
         },
       })
-      if (matches) {
-        const result = await provider.push(request)
-        assert.equal(result.registryDigest, digest)
+      if (repoDigests.length) {
+        const result = await provider.push(localRequest)
+        assert.equal(result.registryDigest, manifestDigest)
       } else {
         await assert.rejects(
-          provider.push(request),
+          provider.push(localRequest),
           (error) => error.code === 'DUPLICATE_EXECUTION',
         )
       }
       assert.equal(calls.some((args) => args.includes('push')), false)
     })
   }
+})
+
+test('existing OCI image indexes fail closed rather than reusing ambiguous manifests', async () => {
+  const provider = new DockerRegistryProvider({
+    config: {
+      registry: 'registry.example.test',
+      repository: 'team/deployhub',
+      username: 'publisher',
+      password: 'secret',
+      immutableTags: true,
+    },
+    run: async (_command, args) => {
+      if (args.includes('--raw')) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            schemaVersion: 2,
+            mediaType: 'application/vnd.oci.image.index.v1+json',
+            manifests: [{
+              mediaType: 'application/vnd.oci.image.manifest.v1+json',
+              digest: request.localImage.digest,
+              platform: { os: 'linux', architecture: 'amd64' },
+            }],
+            config: {
+              mediaType: 'application/vnd.oci.image.config.v1+json',
+              digest: request.localImage.digest,
+            },
+            layers: [],
+          }),
+          stderr: '',
+        }
+      }
+      if (args.includes('image') && args.includes('inspect')) {
+        return { code: 0, stdout: `${request.localImage.digest} ["deployhub-app@${request.localImage.digest}"]\n`, stderr: '' }
+      }
+      return { code: 0, stdout: '', stderr: '' }
+    },
+  })
+  await assert.rejects(
+    provider.push(request),
+    (error) => error.code === 'REGISTRY_DIGEST_UNAVAILABLE',
+  )
 })
 
 test('Docker registry provider reports structured auth, repository, outage, missing-image, and digest failures without leaking output', async (t) => {
@@ -179,12 +641,13 @@ test('Docker registry provider reports structured auth, repository, outage, miss
           password: 'secret',
           immutableTags: true,
         },
+        registryFetch: missingManifestRegistryFetch(),
         run: async (_command, args) => {
           if (matches(args)) {
             return { code: exitCode, stdout: exitCode === 0 ? stderr : '', stderr }
           }
-          if (args.includes('manifest')) return { code: 1, stdout: '', stderr: 'manifest unknown' }
-          if (args.includes('inspect')) {
+          if (args.includes('--raw')) return { code: 1, stdout: '', stderr: 'manifest unknown' }
+          if (args.includes('image') && args.includes('inspect')) {
             return { code: 0, stdout: `${request.localImage.digest}\n`, stderr: '' }
           }
           return { code: 0, stdout: '', stderr: '' }

@@ -79,10 +79,11 @@ export class DockerCliRuntime {
       || typeof reference !== 'string' || !/^deployhub-app:[a-f0-9]{24}$/.test(reference)) {
       throw new Error('Application image build arguments are invalid.')
     }
-    const build = await runBoundedCommand(this.#command, [
+    const build = await this.#commandRunner(this.#command, [
       'build',
       '--network=none',
       '--pull=false',
+      '--provenance=false',
       '--quiet',
       '--tag', reference,
       contextDirectory,
@@ -225,7 +226,7 @@ export class DockerCliRuntime {
   }
 
   async #run(args, policy) {
-    return runBoundedCommand(this.#command, args, {
+    return this.#commandRunner(this.#command, args, {
       timeoutMs: Math.min(policy?.timeoutMs ?? 5000, 10_000),
       maxOutputBytes: Math.min(policy?.logBytes ?? 16_384, 64 * 1024),
     })
